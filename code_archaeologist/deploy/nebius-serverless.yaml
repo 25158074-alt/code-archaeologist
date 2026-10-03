@@ -1,0 +1,56 @@
+# Nebius Serverless Endpoint Configuration
+# Deploy with: nebius serverless deploy --config deploy/nebius-serverless.yaml
+
+name: code-archaeologist-api
+description: "Code Archaeologist - Excavate codebases using Nemotron models on Nebius"
+runtime: python3.11
+
+# Resource allocation
+resources:
+  cpu: "2"
+  memory: "4Gi"
+  gpu: null  # Uses Nebius API for model inference
+
+# Scaling configuration
+scaling:
+  min_replicas: 0
+  max_replicas: 10
+  target_concurrency: 5
+  scale_down_delay: 300
+
+# Environment variables (set via Nebius dashboard or CLI)
+env:
+  - name: NEBIUS_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: nebius-credentials
+        key: api_key
+  - name: NEBIUS_BASE_URL
+    value: "https://integrate.api.nvidia.com/v1"
+  - name: PYTHONUNBUFFERED
+    value: "1"
+
+# Build configuration
+build:
+  dockerfile: deploy/Dockerfile.web
+  context: .
+  args:
+    PYTHON_VERSION: "3.11"
+
+# Health checks
+health_check:
+  path: /health
+  interval: 30
+  timeout: 10
+  retries: 3
+
+# Timeout for long-running excavations
+timeout: 300
+
+# Custom domain (optional)
+# domain: archaeologist.your-domain.com
+
+# Monitoring
+monitoring:
+  enabled: true
+  metrics_port: 9090

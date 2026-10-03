@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  code-archaeologist:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - NEBIUS_BASE_URL=https://integrate.api.nvidia.com/v1
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+
+  code-archaeologist-web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    environment:
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - NEBIUS_BASE_URL=https://integrate.api.nvidia.com/v1
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped

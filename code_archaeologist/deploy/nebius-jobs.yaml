@@ -1,0 +1,97 @@
+# Nebius Serverless Jobs Configuration for Background Excavation
+# Deploy with: nebius jobs create --config deploy/nebius-jobs.yaml
+
+name: code-archaeologist-excavation
+description: "Background codebase excavation jobs using Nemotron models"
+
+# Job template
+template:
+  name: excavation-job
+  runtime: python3.11
+
+  resources:
+    cpu: "4"
+    memory: "8Gi"
+    gpu: null
+
+  env:
+    - name: NEBIUS_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: nebius-credentials
+          key: api_key
+    - name: NEBIUS_BASE_URL
+      value: "https://integrate.api.nvidia.com/v1"
+    - name: PYTHONUNBUFFERED
+      value: "1"
+
+  build:
+    dockerfile: deploy/Dockerfile
+    context: .
+    args:
+      PYTHON_VERSION: "3.11"
+
+  # Job-specific configuration
+  command: ["code-archaeologist", "excavate"]
+  args:
+    - "{{.input.path}}"
+    - "--deep"
+    - "--fast"
+    - "--format=json"
+    - "--save-raw"
+
+  # Timeout for deep excavations (30 minutes)
+  timeout: 1800
+
+  # Retry policy
+  retry_policy:
+    max_retries: 2
+    backoff:
+      initial_interval: 60
+      multiplier: 2
+      max_interval: 300
+
+# Job queue configuration
+queue:
+  name: excavation-queue
+  max_parallel_jobs: 5
+  priority_levels: 3
+
+# Scheduled jobs (optional)
+schedules:
+  - name: weekly-full-scan
+    cron: "0 2 * * 0"  # Weekly Sunday 2 AM
+    input:
+      path: "/data/main-repo"
+      deep: true
+      fast: true
+
+  - name: daily-hotspot-check
+    cron: "0 6 * * *"  # Daily 6 AM
+    input:
+      path: "/data/main-repo"
+      deep: false
+      fast: true
+
+# Webhook notifications
+webhooks:
+  on_success:
+    - url: "https://your-webhook.com/excavation-complete"
+      headers:
+        Authorization: "Bearer {{.secrets.webhook_token}}"
+  on_failure:
+    - url: "https://your-webhook.com/excavation-failed"
+      headers:
+        Authorization: "Bearer {{.secrets.webhook_token}}"
+
+# Output storage
+output:
+  storage:
+    type: "s3"
+    bucket: "code-archaeologist-reports"
+    prefix: "excavations/{{.job_id}}/"
+
+  # Also store in Nebius object storage
+  nebius_storage:
+    enabled: true
+    path: "reports/{{.job_id}}/"
