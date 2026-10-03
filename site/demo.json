@@ -1,0 +1,22 @@
+{
+  "mode": "deterministic-demo",
+  "site_name": "test_project",
+  "summary": {
+    "total_files": 2,
+    "total_lines_of_code": 138,
+    "total_functions": 14,
+    "total_classes": 2,
+    "languages": {"python": {"files": 2, "loc": 138}}
+  },
+  "health_score": {
+    "overall_score": 67,
+    "risk_level": "medium",
+    "top_concerns": ["Long service methods", "Repeated validation logic", "Missing integration coverage"]
+  },
+  "hotspots": [
+    {"file": "service.py", "complexity": 24, "lines": 97, "functions": 9},
+    {"file": "api.py", "complexity": 11, "lines": 41, "functions": 5}
+  ],
+  "findings": {"artifacts": 5, "strata": 3, "fossils": 2, "ruins": 4},
+  "note": "Credential-free public fixture. Live scans use the configured Nemotron models on Nebius."
+}

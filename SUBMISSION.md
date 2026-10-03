@@ -18,7 +18,7 @@
 ## Required URLs
 
 - **Public code repository:** https://github.com/25158074-alt/code-archaeologist
-- **Working demo:** https://8000-i93fdw1al0xqxynuxp89l-25bd32c6.sg2.manus.computer
+- **Working demo:** `ADD_FINAL_HOSTED_DEMO_URL`
 - **Demonstration video on YouTube:** `ADD_PUBLIC_YOUTUBE_URL`
 
 ## Recommended track
