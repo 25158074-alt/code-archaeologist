@@ -60,6 +60,7 @@ archaeology-reports/
 data/
 reports/
 *.log
+media/demo_frames/
 
 # Docker
 docker-compose.override.yml

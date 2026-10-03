@@ -79,6 +79,12 @@ python deploy/web_api.py
 - `POST /scan` — Quick synchronous scan
 - `GET /health` — Health check
 
+### Public judging demo
+
+The API also serves a credential-free interactive demo at `/`. Click **Run sample excavation** to load a bundled fixture report from `/demo`; this makes the project easy to evaluate without exposing an API key. Live `/scan` and `/excavate` requests use the configured Nebius endpoint and require `NEBIUS_API_KEY` on the server.
+
+See [`SUBMISSION.md`](SUBMISSION.md) for the hackathon description, required URLs, model/tool disclosure, video plan, feedback, and final submission checklist.
+
 ## ⚙️ Background Jobs (Nebius Serverless Jobs)
 
 Schedule recurring excavations:
