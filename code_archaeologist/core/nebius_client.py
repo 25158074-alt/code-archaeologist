@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -10,12 +10,40 @@ from typing import Any, AsyncIterator, Literal
 import httpx
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential_jitter,
 )
 
 from code_archaeologist.core.config import get_settings
+
+
+def extract_json(text: str) -> Any:
+    """Parse JSON from a model reply, tolerating <think> blocks and ```json fences."""
+    if text is None:
+        raise json.JSONDecodeError("empty response", "", 0)
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL)
+    if fence:
+        cleaned = fence.group(1).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        starts = [i for i in (cleaned.find("{"), cleaned.find("[")) if i != -1]
+        if not starts:
+            raise
+        start = min(starts)
+        end = max(cleaned.rfind("}"), cleaned.rfind("]"))
+        if end <= start:
+            raise
+        return json.loads(cleaned[start : end + 1])
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
 
 
 class ModelTier(str, Enum):
@@ -83,7 +111,7 @@ class NebiusClient:
 
     async def __aenter__(self) -> NebiusClient:
         self._client = httpx.AsyncClient(
-            base_url=self._nebius.base_url,
+            base_url=self._nebius.base_url.rstrip("/") + "/",
             headers={
                 "Authorization": f"Bearer {self._nebius.api_key}",
                 "Content-Type": "application/json",
@@ -111,7 +139,8 @@ class NebiusClient:
     @retry(
         wait=wait_exponential_jitter(initial=1, max=30),
         stop=stop_after_attempt(3),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.HTTPStatusError)),
+        retry=retry_if_exception(_is_retryable),
+    reraise=True,
     )
     async def complete(
         self,
@@ -142,7 +171,7 @@ class NebiusClient:
             payload["response_format"] = response_format
 
         start = time.perf_counter()
-        response = await self._client.post("/chat/completions", json=payload)
+        response = await self._client.post("chat/completions", json=payload)
         response.raise_for_status()
         latency_ms = (time.perf_counter() - start) * 1000
 
@@ -151,7 +180,7 @@ class NebiusClient:
         usage = data.get("usage", {})
 
         return CompletionResponse(
-            content=choice["message"]["content"],
+            content=choice["message"].get("content") or "",
             model=model_name,
             usage={
                 "prompt_tokens": usage.get("prompt_tokens", 0),
@@ -164,7 +193,7 @@ class NebiusClient:
 
     async def complete_stream(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage] | list[dict[str, str]],
         tier: ModelTier = ModelTier.SUPER,
         model: str | None = None,
         temperature: float | None = None,
@@ -180,13 +209,13 @@ class NebiusClient:
 
         payload = {
             "model": model_name,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": self._normalize_messages(messages),
             "temperature": temp,
             "max_tokens": max_tok,
             "stream": True,
         }
 
-        async with self._client.stream("POST", "/chat/completions", json=payload) as response:
+        async with self._client.stream("POST", "chat/completions", json=payload) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
@@ -196,7 +225,7 @@ class NebiusClient:
                     try:
                         chunk = json.loads(data)
                         delta = chunk["choices"][0].get("delta", {})
-                        if "content" in delta:
+                        if delta.get("content"):
                             yield delta["content"]
                     except json.JSONDecodeError:
                         continue

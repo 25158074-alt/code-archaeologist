@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Nebius API
     nebius_api_key: str = Field(default="", description="Nebius API key")
     nebius_base_url: str = Field(
-        default="https://integrate.api.nvidia.com",
+        default="https://integrate.api.nvidia.com/v1",
         description="Nebius/NVIDIA API base URL",
     )
     nebius_timeout: float = Field(default=60.0, description="Request timeout in seconds")

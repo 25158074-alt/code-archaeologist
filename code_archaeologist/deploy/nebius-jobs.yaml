@@ -1,5 +1,5 @@
 # Nebius Serverless Jobs Configuration for Background Excavation
-# Deploy with: nebius jobs create --config deploy/nebius-jobs.yaml
+# Deploy with: nebius jobs create --config code_archaeologist/deploy/nebius-jobs.yaml
 
 name: code-archaeologist-excavation
 description: "Background codebase excavation jobs using Nemotron models"
@@ -21,12 +21,12 @@ template:
           name: nebius-credentials
           key: api_key
     - name: NEBIUS_BASE_URL
-      value: "https://integrate.api.nvidia.com/v1"
+      value: "https://api.tokenfactory.us-central1.nebius.com/v1/"
     - name: PYTHONUNBUFFERED
       value: "1"
 
   build:
-    dockerfile: deploy/Dockerfile
+    dockerfile: code_archaeologist/deploy/Dockerfile
     context: .
     args:
       PYTHON_VERSION: "3.11"

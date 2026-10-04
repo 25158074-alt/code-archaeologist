@@ -1,3 +1,5 @@
+# Build from the repository root:
+#   docker build -f code_archaeologist/deploy/Dockerfile.web -t code-archaeologist-web .
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -6,15 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[web]"
-
+COPY pyproject.toml README.md ./
 COPY code_archaeologist ./code_archaeologist
-COPY deploy/web_api.py ./web_api.py
+RUN pip install --no-cache-dir ".[web]"
 
-ENV PYTHONPATH=/app
+RUN mkdir -p /app/data
+ENV ARCHAEOLOGIST_ALLOWED_ROOT=/app/data
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["python", "web_api.py"]
+CMD ["python", "-m", "code_archaeologist.deploy.web_api"]

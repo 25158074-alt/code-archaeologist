@@ -2,24 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
-import subprocess
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import networkx as nx
-import numpy as np
 from git import Repo
-from sklearn.cluster import DBSCAN
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 from code_archaeologist.core.config import get_settings
 from code_archaeologist.core.nebius_client import NebiusClient, ModelTier
 from code_archaeologist.models.findings import (
     Artifact,
     ArtifactType,
+    ExcavationReport,
     Fossil,
     FossilType,
     Location,
@@ -39,6 +36,23 @@ class ExcavationEngine:
         self.parsed_files: dict[str, ParsedFile] = {}
         self.file_graph: nx.DiGraph = nx.DiGraph()
         self._git_repo: Repo | None = None
+        self._site_path: Path | None = None
+        self.artifacts: list[Artifact] = []
+        self.strata: list[Stratum] = []
+        self.fossils: list[Fossil] = []
+        self.ruins: list[Ruin] = []
+
+    EXCLUDED_DIRS = {
+        ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "__pycache__",
+        "site-packages", "dist", "build", ".tox", ".mypy_cache", ".pytest_cache",
+        ".cache", "target", "vendor", ".idea", ".vscode",
+    }
+    SOURCE_EXTENSIONS = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs")
+
+    @staticmethod
+    def _stable_id(kind: str, name: str, locations: list[Location]) -> str:
+        key = "|".join([kind, name] + [f"{l.file_path}:{l.start_line}-{l.end_line}" for l in locations])
+        return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
     async def excavate(self, path: str | Path) -> dict[str, Any]:
         site_path = Path(path).resolve()
@@ -51,41 +65,74 @@ class ExcavationEngine:
         await self._build_dependency_graph()
         await self._analyze_git_history()
 
-        artifacts = await self._discover_artifacts()
-        strata = await self._identify_strata()
-        fossils = await self._excavate_fossils()
-        ruins = await self._uncover_ruins()
+        self.artifacts = await self._discover_artifacts()
+        self.strata = await self._identify_strata()
+        self.fossils = await self._excavate_fossils()
+        self.ruins = await self._uncover_ruins()
+        self._assign_stable_ids()
 
-        report = self._compile_report(site_name, str(site_path), artifacts, strata, fossils, ruins)
+        report = self._compile_report(
+            site_name, str(site_path), self.artifacts, self.strata, self.fossils, self.ruins
+        )
         return report.to_dict()
+
+    def _assign_stable_ids(self) -> None:
+        """Deterministic IDs so `explain <id>` works across separate runs."""
+        seen: set[str] = set()
+
+        def unique(candidate: str) -> str:
+            while candidate in seen:
+                candidate = hashlib.sha1(candidate.encode()).hexdigest()[:8]
+            seen.add(candidate)
+            return candidate
+
+        for a in self.artifacts:
+            a.id = unique(self._stable_id(a.type.value, a.name, a.locations))
+        for st in self.strata:
+            st.id = unique(self._stable_id("stratum", st.name, [Location(f, 0, 0) for f in st.files[:5]]))
+        for fo in self.fossils:
+            fo.id = unique(self._stable_id(fo.type.value, fo.name, [fo.location] if fo.location else []))
+        for r in self.ruins:
+            r.id = unique(self._stable_id(r.type.value, r.name, r.locations))
 
     async def _initialize_git(self, path: Path) -> None:
         try:
             self._git_repo = Repo(path, search_parent_directories=True)
+            self._site_path = path
         except Exception:
             self._git_repo = None
 
     async def _discover_and_parse(self, path: Path) -> None:
-        files = []
-        for ext in [".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs"]:
-            files.extend(path.rglob(f"*{ext}"))
-
+        path = Path(path).resolve()
         max_size = self.settings.analysis.max_file_size_kb * 1024
-        files = [f for f in files if f.stat().st_size <= max_size]
+        files = []
+        for f in sorted(path.rglob("*")):
+            if f.suffix.lower() not in self.SOURCE_EXTENSIONS or not f.is_file():
+                continue
+            rel_parts = f.relative_to(path).parts[:-1]
+            if any(p in self.EXCLUDED_DIRS or p.endswith(".egg-info") for p in rel_parts):
+                continue
+            try:
+                if f.stat().st_size <= max_size:
+                    files.append(f)
+            except OSError:
+                continue
 
         print(f"[*] Parsing {len(files)} source files...")
 
         semaphore = asyncio.Semaphore(self.settings.analysis.parallel_workers)
 
+        def parse_sync(file_path: Path) -> None:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+            parser = get_parser_for_file(str(file_path))
+            if parser:
+                rel_path = file_path.relative_to(path).as_posix()
+                self.parsed_files[rel_path] = parser.parse(content, rel_path)
+
         async def parse_file(file_path: Path):
             async with semaphore:
                 try:
-                    content = file_path.read_text(encoding="utf-8", errors="ignore")
-                    parser = get_parser_for_file(str(file_path))
-                    if parser:
-                        rel_path = file_path.relative_to(path).as_posix()
-                        parsed = parser.parse(content, rel_path)
-                        self.parsed_files[rel_path] = parsed
+                    await asyncio.to_thread(parse_sync, file_path)
                 except Exception as e:
                     print(f"[WARN] Failed to parse {file_path}: {e}")
 
@@ -104,18 +151,45 @@ class ExcavationEngine:
                     self.file_graph.add_edge(rel_path, imported)
 
     def _resolve_import(self, import_text: str, from_file: str) -> str | None:
-        import_text = import_text.strip()
-        if import_text.startswith(("import ", "from ")):
-            parts = import_text.replace("from ", "").replace("import ", "").split()
-            if parts:
-                module = parts[0].replace(".", "/")
+        """Best-effort resolution of an import statement to a parsed file."""
+        text = import_text.strip()
+        modules: list[str] = []
+        if text.startswith("from "):
+            m = re.match(r"from\s+(\.*)([\w.]*)\s+import\s+(.+)", text, re.DOTALL)
+            if not m:
+                return None
+            dots, module, names = m.groups()
+            base = module
+            if dots:
                 base_dir = Path(from_file).parent
-                for ext in [".py", ".js", ".ts", ".go", ".rs"]:
-                    candidate = (base_dir / f"{module}{ext}").as_posix()
-                    if candidate in self.parsed_files:
-                        return candidate
-                    candidate = (base_dir / module / f"__init__{ext}").as_posix()
-                    if candidate in self.parsed_files:
+                for _ in range(len(dots) - 1):
+                    base_dir = base_dir.parent
+                prefix = base_dir.as_posix()
+                prefix = "" if prefix == "." else prefix + "/"
+                if module:
+                    modules.append(prefix + module.replace(".", "/"))
+                for name in re.findall(r"\w+", names):
+                    modules.append(prefix + (module.replace(".", "/") + "/" if module else "") + name)
+            else:
+                modules.append(base.replace(".", "/"))
+                for name in re.findall(r"\w+", names):
+                    modules.append(base.replace(".", "/") + "/" + name)
+        elif text.startswith("import "):
+            for part in text[len("import "):].split(","):
+                name = part.strip().split(" as ")[0].split()[0] if part.strip() else ""
+                if name:
+                    modules.append(name.replace(".", "/"))
+        else:
+            return None
+
+        # Also try relative to the importing file's directory (sibling modules).
+        sibling_dir = Path(from_file).parent.as_posix()
+        sibling_dir = "" if sibling_dir == "." else sibling_dir + "/"
+        candidates_roots = modules + [sibling_dir + m for m in modules if not m.startswith(sibling_dir)]
+        for module in candidates_roots:
+            for ext in (".py", ".js", ".ts", ".go", ".rs"):
+                for candidate in (f"{module}{ext}", f"{module}/__init__{ext}", f"{module}/index{ext}"):
+                    if candidate in self.parsed_files and candidate != from_file:
                         return candidate
         return None
 
@@ -125,7 +199,8 @@ class ExcavationEngine:
 
         for rel_path in self.parsed_files:
             try:
-                commits = list(self._git_repo.iter_commits(paths=rel_path, max_count=1))
+                abs_path = str((self._site_path / rel_path).resolve()) if self._site_path else rel_path
+                commits = list(self._git_repo.iter_commits(paths=abs_path, max_count=1))
                 if commits:
                     last_commit = commits[0]
                     self.parsed_files[rel_path].last_modified = datetime.fromtimestamp(
@@ -407,43 +482,44 @@ class ExcavationEngine:
         return fossils
 
     async def _find_dead_code(self) -> list[Fossil]:
-        fossils = []
+        fossils: list[Fossil] = []
+        ignored = {"main", "setUp", "tearDown"}
 
-        all_functions = set()
-        called_functions = set()
+        # Count textual call/reference sites for every identifier across the codebase.
+        reference_counts: Counter[str] = Counter()
+        for parsed in self.parsed_files.values():
+            reference_counts.update(re.findall(r"[A-Za-z_]\w*", parsed.content))
+
+        # Each definition contributes exactly one occurrence of its own name.
+        definition_counts: Counter[str] = Counter()
+        for parsed in self.parsed_files.values():
+            for func in parsed.functions:
+                definition_counts[func["name"]] += 1
 
         for rel_path, parsed in self.parsed_files.items():
             for func in parsed.functions:
-                all_functions.add(f"{rel_path}:{func['name']}")
-
-        for rel_path, parsed in self.parsed_files.items():
-            content = parsed.content
-            for func_name in all_functions:
-                short_name = func_name.split(":")[-1]
-                if f"{short_name}(" in content and not content.strip().startswith(f"def {short_name}"):
-                    called_functions.add(func_name)
-
-        dead_functions = all_functions - called_functions
-        for dead_func in list(dead_functions)[:20]:
-            file_path, func_name = dead_func.split(":", 1)
-            parsed = self.parsed_files.get(file_path)
-            if parsed:
-                for func in parsed.functions:
-                    if func["name"] == func_name:
-                        fossils.append(Fossil(
-                            type=FossilType.DEAD_CODE,
-                            name=f"Dead Function: {func_name}",
-                            description=f"Function appears to never be called",
-                            location=Location(
-                                file_path=file_path,
-                                start_line=func["start_line"],
-                                end_line=func["end_line"],
-                            ),
-                            severity=Severity.MEDIUM,
-                            reasoning="Static analysis suggests this function is never invoked",
-                            remediation="Verify if function is truly unused; remove if confirmed dead",
-                        ))
-                        break
+                name = func["name"]
+                if name in ignored or (name.startswith("__") and name.endswith("__")):
+                    continue
+                if name.startswith("test") or any(d.startswith("@") for d in func.get("decorators", [])):
+                    continue
+                if reference_counts[name] > definition_counts[name]:
+                    continue
+                fossils.append(Fossil(
+                    type=FossilType.DEAD_CODE,
+                    name=f"Dead Function: {name}",
+                    description="Function appears to never be called",
+                    location=Location(
+                        file_path=rel_path,
+                        start_line=func["start_line"],
+                        end_line=func["end_line"],
+                    ),
+                    severity=Severity.MEDIUM,
+                    reasoning="No references to this name were found outside its definition",
+                    remediation="Verify if function is truly unused; remove if confirmed dead",
+                ))
+                if len(fossils) >= 20:
+                    return fossils
 
         return fossils
 
@@ -581,7 +657,6 @@ class ExcavationEngine:
         ruins = []
 
         for rel_path, parsed in self.parsed_files.items():
-            import re
             numbers = re.findall(r'\b\d{2,}\b', parsed.content)
             unique_numbers = set(numbers)
             suspicious = [n for n in unique_numbers if int(n) not in (0, 1, 2, 10, 100, 1000, 1024, 2048, 4096, 8080, 3000, 5000, 8000, 8080, 8888, 9000)]
@@ -628,9 +703,7 @@ class ExcavationEngine:
         strata: list[Stratum],
         fossils: list[Fossil],
         ruins: list[Ruin],
-    ) -> dict:
-        from code_archaeologist.models.findings import ExcavationReport
-
+    ) -> ExcavationReport:
         report = ExcavationReport(
             site_name=site_name,
             site_path=site_path,
@@ -642,12 +715,12 @@ class ExcavationEngine:
                 "total_files_analyzed": len(self.parsed_files),
                 "total_lines_of_code": sum(p.lines_of_code for p in self.parsed_files.values()),
                 "languages": list(set(p.language for p in self.parsed_files.values())),
-                "artifact_counts": Counter(a.type.value for a in artifacts),
-                "stratum_counts": Counter(s.type.value for s in strata),
-                "fossil_counts": Counter(f.type.value for f in fossils),
-                "ruin_counts": Counter(r.type.value for r in ruins),
-                "ruin_severity": Counter(r.severity.value for r in ruins),
+                "artifact_counts": dict(Counter(a.type.value for a in artifacts)),
+                "stratum_counts": dict(Counter(s.type.value for s in strata)),
+                "fossil_counts": dict(Counter(f.type.value for f in fossils)),
+                "ruin_counts": dict(Counter(r.type.value for r in ruins)),
+                "ruin_severity": dict(Counter(r.severity.value for r in ruins)),
             },
         )
 
-        return report.to_dict()
+        return report

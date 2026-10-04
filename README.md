@@ -25,7 +25,7 @@ Unlike traditional static analyzers that just dump metrics, Code Archaeologist t
 
 ```bash
 # Install
-pip install -e ".[dev]"
+pip install -e .
 
 # Configure
 cp .env.example .env
@@ -66,11 +66,11 @@ Deploy as a serverless endpoint:
 
 ```bash
 # Build and deploy
-nebius serverless deploy --config deploy/nebius-serverless.yaml
+nebius serverless deploy --config code_archaeologist/deploy/nebius-serverless.yaml
 
 # Or run locally
 pip install -e ".[web]"
-python deploy/web_api.py
+python -m code_archaeologist.deploy.web_api
 ```
 
 **API Endpoints:**
@@ -79,12 +79,20 @@ python deploy/web_api.py
 - `POST /scan` — Quick synchronous scan
 - `GET /health` — Health check
 
+### Public judging demo
+
+The API also serves a credential-free interactive demo at `/`. Click **Run sample excavation** to load a bundled fixture report from `/demo`; this makes the project easy to evaluate without exposing an API key. Live `/scan` and `/excavate` requests use the configured Nebius endpoint and require `NEBIUS_API_KEY` on the server.
+
+The repository includes the demo page source under `site/`; deploy it through your preferred static host when a permanent public URL is available.
+
+See [`SUBMISSION.md`](SUBMISSION.md) for the hackathon description, required URLs, model/tool disclosure, video plan, feedback, and final submission checklist.
+
 ## ⚙️ Background Jobs (Nebius Serverless Jobs)
 
 Schedule recurring excavations:
 
 ```bash
-nebius jobs create --config deploy/nebius-jobs.yaml
+nebius jobs create --config code_archaeologist/deploy/nebius-jobs.yaml
 ```
 
 Features:
@@ -99,9 +107,10 @@ All settings via `.env` or environment variables:
 
 ```bash
 NEBIUS_API_KEY=your-key          # Required
-NEBIUS_BASE_URL=https://...      # Optional
-ANALYSIS_FOSSIL_THRESHOLD_DAYS=180
-ANALYSIS_RUIN_COMPLEXITY_THRESHOLD=50
+NEBIUS_BASE_URL=https://.../v1   # Optional, must include /v1
+FOSSIL_THRESHOLD_DAYS=180
+RUIN_COMPLEXITY_THRESHOLD=50
+ARCHAEOLOGIST_ALLOWED_ROOT=./data  # web API: only this directory can be scanned
 LOG_LEVEL=INFO
 ```
 
@@ -187,7 +196,7 @@ With `--deep`, Nemotron 3 Ultra provides:
 
 ### Serverless Endpoint (API)
 ```yaml
-# deploy/nebius-serverless.yaml
+# code_archaeologist/deploy/nebius-serverless.yaml
 resources:
   cpu: "2"
   memory: "4Gi"
@@ -198,7 +207,7 @@ scaling:
 
 ### Serverless Jobs (Background)
 ```yaml
-# deploy/nebius-jobs.yaml
+# code_archaeologist/deploy/nebius-jobs.yaml
 template:
   resources:
     cpu: "4"
@@ -213,7 +222,6 @@ schedules:
 ```bash
 # Dev setup
 pip install -e ".[dev]"
-pre-commit install
 
 # Run tests
 pytest

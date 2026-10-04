@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import json
+import re
 from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import Progress, TextColumn
 from rich.table import Table
@@ -25,6 +28,17 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console(force_terminal=True, color_system="truecolor", legacy_windows=False)
+
+
+def _require_api_key() -> None:
+    if not get_settings().nebius.api_key:
+        console.print("[red]ERROR: NEBIUS_API_KEY not set. Please configure in .env or environment.[/red]")
+        raise typer.Exit(1)
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 @app.command()
@@ -50,9 +64,13 @@ async def _excavate_async(
 ):
     settings = get_settings()
 
-    if not settings.nebius.api_key:
-        console.print("[red]ERROR: NEBIUS_API_KEY not set. Please configure in .env or environment.[/red]")
-        raise typer.Exit(1)
+    format = format.lower()
+    if format not in ("json", "markdown", "html"):
+        console.print(f"[red]ERROR: unknown format '{format}'. Use json, markdown or html.[/red]")
+        raise typer.Exit(2)
+
+    if deep or fast:
+        _require_api_key()
 
     async with NebiusClient() as client:
         engine = ExcavationEngine(client)
@@ -84,11 +102,8 @@ async def _excavate_async(
                 task = progress.add_task("[*] Deep reasoning with Nemotron 3 Ultra...", total=None)
                 reasoning_engine = DeepReasoningEngine(client)
 
-                from code_archaeologist.models.findings import Artifact, Fossil, Ruin, Stratum
-                artifacts = [Artifact(**a) for a in report["artifacts"]]
-                strata = [Stratum(**s) for s in report["strata"]]
-                fossils = [Fossil(**f) for f in report["fossils"]]
-                ruins = [Ruin(**r) for r in report["ruins"]]
+                artifacts, strata = engine.artifacts, engine.strata
+                fossils, ruins = engine.fossils, engine.ruins
 
                 arch_analysis = await reasoning_engine.analyze_architecture(
                     artifacts, strata, fossils, ruins,
@@ -111,21 +126,21 @@ async def _excavate_async(
                 progress.update(task, description="DONE: Deep reasoning complete")
 
         if save_raw:
-            raw_path = output or Path(settings.output_dir) / f"{path.name}-raw.json"
-            raw_path.write_text(json.dumps(report, indent=2))
+            raw_path = Path(settings.output_dir) / f"{path.name}-raw.json"
+            _write_text(raw_path, json.dumps(report, indent=2, ensure_ascii=False))
             console.print(f"[green]SAVED: Raw report saved to {raw_path}[/green]")
 
         if format == "json":
             output_path = output or Path(settings.output_dir) / f"{path.name}-report.json"
-            output_path.write_text(json.dumps(report, indent=2))
+            _write_text(output_path, json.dumps(report, indent=2, ensure_ascii=False))
             console.print(f"[green]SAVED: JSON report saved to {output_path}[/green]")
         elif format == "markdown":
             output_path = output or Path(settings.output_dir) / f"{path.name}-report.md"
-            output_path.write_text(_generate_markdown_report(report))
+            _write_text(output_path, _generate_markdown_report(report))
             console.print(f"[green]SAVED: Markdown report saved to {output_path}[/green]")
         elif format == "html":
             output_path = output or Path(settings.output_dir) / f"{path.name}-report.html"
-            output_path.write_text(_generate_html_report(report))
+            _write_text(output_path, _generate_html_report(report))
             console.print(f"[green]SAVED: HTML report saved to {output_path}[/green]")
 
         _print_summary(report)
@@ -141,11 +156,8 @@ def scan(
 
 
 async def _scan_async(path: Path, file: Optional[Path]):
-    settings = get_settings()
-
-    if not settings.nebius.api_key:
-        console.print("[red]ERROR: NEBIUS_API_KEY not set[/red]")
-        raise typer.Exit(1)
+    _require_api_key()
+    path = path.resolve()
 
     async with NebiusClient() as client:
         engine = ExcavationEngine(client)
@@ -162,7 +174,13 @@ async def _scan_async(path: Path, file: Optional[Path]):
         fast_engine = FastAnalysisEngine(client)
 
         if file:
-            rel_path = file.relative_to(path).as_posix()
+            if not file.is_absolute() and not file.exists():
+                file = path / file
+            try:
+                rel_path = file.resolve().relative_to(path).as_posix()
+            except ValueError:
+                console.print(f"[red]File {file} is not inside {path}[/red]")
+                raise typer.Exit(1)
             if rel_path in engine.parsed_files:
                 with Progress(
                     TextColumn("[progress.description]{task.description}"),
@@ -171,7 +189,7 @@ async def _scan_async(path: Path, file: Optional[Path]):
                     task = progress.add_task(f"[*] Analyzing {rel_path}...", total=None)
                     intent = await fast_engine.analyze_file_intent(engine.parsed_files[rel_path])
                     progress.update(task, description="DONE: Done")
-                console.print(Panel.fit(json.dumps(intent, indent=2), title=f"File Intent: {rel_path}"))
+                console.print(Panel.fit(escape(json.dumps(intent, indent=2)), title=f"File Intent: {rel_path}"))
             else:
                 console.print(f"[red]File not found in parsed files: {rel_path}[/red]")
         else:
@@ -197,24 +215,30 @@ def explain(
 
 
 async def _explain_async(path: Path, finding_id: str, finding_type: str):
-    settings = get_settings()
+    _require_api_key()
+
+    findings_key = finding_type.lower()
+    if findings_key not in ("artifact", "fossil", "ruin"):
+        console.print("[red]--type must be one of: artifact, fossil, ruin[/red]")
+        raise typer.Exit(2)
 
     async with NebiusClient() as client:
         engine = ExcavationEngine(client)
         await engine.excavate(path)
 
         findings_map = {
-            "artifact": engine.artifacts if hasattr(engine, 'artifacts') else [],
-            "fossil": engine.fossils if hasattr(engine, 'fossils') else [],
-            "ruin": engine.ruins if hasattr(engine, 'ruins') else [],
+            "artifact": engine.artifacts,
+            "fossil": engine.fossils,
+            "ruin": engine.ruins,
         }
 
-        findings = findings_map.get(finding_type, [])
+        findings = findings_map[findings_key]
         finding = next((f for f in findings if f.id == finding_id), None)
 
         if not finding:
-            console.print(f"[red]Finding {finding_id} not found[/red]")
-            return
+            available = ", ".join(f.id for f in findings[:10]) or "none"
+            console.print(f"[red]{findings_key.title()} {finding_id} not found. Available IDs: {available}[/red]")
+            raise typer.Exit(1)
 
         reasoning_engine = DeepReasoningEngine(client)
         explanation = await reasoning_engine.explain_finding(finding, {
@@ -222,7 +246,7 @@ async def _explain_async(path: Path, finding_id: str, finding_type: str):
             "total_files": len(engine.parsed_files),
         })
 
-        console.print(Panel.fit(explanation, title=f"Explanation: {finding.name}"))
+        console.print(Panel.fit(escape(explanation), title=f"Explanation: {escape(finding.name)}"))
 
 
 @app.command()
@@ -235,27 +259,23 @@ def remediation(
 
 
 async def _remediation_async(path: Path, output: Optional[Path]):
-    settings = get_settings()
+    _require_api_key()
 
     async with NebiusClient() as client:
         engine = ExcavationEngine(client)
         report = await engine.excavate(path)
 
-        from code_archaeologist.models.findings import Ruin, Stratum
-        ruins = [Ruin(**r) for r in report["ruins"]]
-        strata = [Stratum(**s) for s in report["strata"]]
-
         reasoning_engine = DeepReasoningEngine(client)
-        plan = await reasoning_engine.generate_remediation_plan(ruins, strata, {
+        plan = await reasoning_engine.generate_remediation_plan(engine.ruins, engine.strata, {
             "site_name": report["site_name"],
             "site_path": report["site_path"],
         })
 
         if output:
-            output.write_text(json.dumps(plan, indent=2))
+            _write_text(output, json.dumps(plan, indent=2, ensure_ascii=False))
             console.print(f"[green]SAVED: Remediation plan saved to {output}[/green]")
         else:
-            console.print(Panel.fit(json.dumps(plan, indent=2), title="Remediation Plan"))
+            console.print(Panel.fit(escape(json.dumps(plan, indent=2)), title="Remediation Plan"))
 
 
 @app.command()
@@ -268,27 +288,23 @@ def predict(
 
 
 async def _predict_async(path: Path, output: Optional[Path]):
-    settings = get_settings()
+    _require_api_key()
 
     async with NebiusClient() as client:
         engine = ExcavationEngine(client)
         report = await engine.excavate(path)
 
-        from code_archaeologist.models.findings import Artifact, Stratum
-        artifacts = [Artifact(**a) for a in report["artifacts"]]
-        strata = [Stratum(**s) for s in report["strata"]]
-
         reasoning_engine = DeepReasoningEngine(client)
-        prediction = await reasoning_engine.predict_evolution(strata, artifacts, {
+        prediction = await reasoning_engine.predict_evolution(engine.strata, engine.artifacts, {
             "site_name": report["site_name"],
             "site_path": report["site_path"],
         })
 
         if output:
-            output.write_text(json.dumps(prediction, indent=2))
+            _write_text(output, json.dumps(prediction, indent=2, ensure_ascii=False))
             console.print(f"[green]SAVED: Prediction saved to {output}[/green]")
         else:
-            console.print(Panel.fit(json.dumps(prediction, indent=2), title="Evolution Prediction"))
+            console.print(Panel.fit(escape(json.dumps(prediction, indent=2)), title="Evolution Prediction"))
 
 
 def _print_summary(report: dict):
@@ -334,8 +350,8 @@ def _print_summary(report: dict):
         health = fast_analysis.get("health_score", {})
         console.print(Panel.fit(
             f"[bold]Health Score:[/bold] {health.get('overall_score', 'N/A')}/100\n"
-            f"[bold]Risk Level:[/bold] {health.get('risk_level', 'N/A').upper()}\n"
-            f"[bold]Top Concerns:[/bold] {', '.join(health.get('top_concerns', []))}",
+            f"[bold]Risk Level:[/bold] {str(health.get('risk_level', 'N/A')).upper()}\n"
+            f"[bold]Top Concerns:[/bold] {', '.join(str(c) for c in health.get('top_concerns', []))}",
             title="Fast Health Assessment",
             border_style="yellow",
         ))
@@ -372,7 +388,7 @@ def _print_scan_results(results: dict):
     if recs:
         console.print("\n[bold]Quick Recommendations:[/bold]")
         for i, rec in enumerate(recs, 1):
-            console.print(f"  {i}. {rec}")
+            console.print(f"  {i}. {escape(str(rec))}")
 
 
 def _generate_markdown_report(report: dict) -> str:
@@ -408,7 +424,7 @@ def _generate_markdown_report(report: dict) -> str:
 
     lines.append("## Fossils\n")
     for f in report.get("fossils", [])[:20]:
-        lines.append(f"### {f['type'].replace('_', ' ').title()}: {f['name']}")
+        lines.append(f"### {f['name']}")
         lines.append(f"- **Severity:** {f['severity']}")
         lines.append(f"- **Age:** {f['estimated_age_days']} days")
         lines.append(f"- **Reasoning:** {f['reasoning']}")
@@ -417,7 +433,7 @@ def _generate_markdown_report(report: dict) -> str:
 
     lines.append("## Ruins\n")
     for r in report.get("ruins", [])[:20]:
-        lines.append(f"### {r['type'].replace('_', ' ').title()}: {r['name']}")
+        lines.append(f"### {r['name']}")
         lines.append(f"- **Severity:** {r['severity']}")
         lines.append(f"- **Effort:** {r['effort_estimate']}")
         lines.append(f"- **Reasoning:** {r['reasoning']}")
@@ -444,7 +460,8 @@ def _generate_html_report(report: dict) -> str:
     return f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Code Archaeologist Report - {report['site_name']}</title>
+    <meta charset="utf-8">
+    <title>Code Archaeologist Report - {html_lib.escape(report['site_name'])}</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; line-height: 1.6; }}
         h1, h2, h3 {{ color: #2c3e50; }}
@@ -466,20 +483,42 @@ def _generate_html_report(report: dict) -> str:
 </html>"""
 
 
+def _inline_md(text: str) -> str:
+    text = html_lib.escape(text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    return text
+
+
 def _markdown_to_html(md: str) -> str:
-    html = md
-    html = html.replace("\n## ", "\n<h2>").replace("## ", "<h2>").replace("\n### ", "\n<h3>").replace("### ", "<h3>")
-    html = html.replace("\n# ", "\n<h1>").replace("# ", "<h1>")
-    html = html.replace("**", "<strong>").replace("**", "</strong>")
-    html = html.replace("`", "<code>").replace("`", "</code>")
-    html = html.replace("\n- ", "\n<li>").replace("- ", "<li>")
-    html = html.replace("\n\n", "</p><p>")
-    html = f"<p>{html}</p>"
-    html = html.replace("<p><h1>", "<h1>").replace("</h1></p>", "</h1>")
-    html = html.replace("<p><h2>", "<h2>").replace("</h2></p>", "</h2>")
-    html = html.replace("<p><h3>", "<h3>").replace("</h3></p>", "</h3>")
-    html = html.replace("<p><li>", "<ul><li>").replace("</li></p>", "</li></ul>")
-    return html
+    out: list[str] = []
+    in_list = False
+    for raw in md.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_inline_md(stripped[2:])}</li>")
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        if not stripped:
+            continue
+        if stripped == "---":
+            out.append("<hr>")
+            continue
+        heading = re.match(r"^(#{1,3})\s+(.*)$", stripped)
+        if heading:
+            level = len(heading.group(1))
+            out.append(f"<h{level}>{_inline_md(heading.group(2))}</h{level}>")
+        else:
+            out.append(f"<p>{_inline_md(stripped)}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "\n".join(out)
 
 
 if __name__ == "__main__":

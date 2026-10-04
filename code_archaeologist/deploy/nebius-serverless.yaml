@@ -1,5 +1,5 @@
 # Nebius Serverless Endpoint Configuration
-# Deploy with: nebius serverless deploy --config deploy/nebius-serverless.yaml
+# Deploy with: nebius serverless deploy --config code_archaeologist/deploy/nebius-serverless.yaml
 
 name: code-archaeologist-api
 description: "Code Archaeologist - Excavate codebases using Nemotron models on Nebius"
@@ -26,13 +26,13 @@ env:
         name: nebius-credentials
         key: api_key
   - name: NEBIUS_BASE_URL
-    value: "https://integrate.api.nvidia.com/v1"
+    value: "https://api.tokenfactory.us-central1.nebius.com/v1/"
   - name: PYTHONUNBUFFERED
     value: "1"
 
 # Build configuration
 build:
-  dockerfile: deploy/Dockerfile.web
+  dockerfile: code_archaeologist/deploy/Dockerfile.web
   context: .
   args:
     PYTHON_VERSION: "3.11"

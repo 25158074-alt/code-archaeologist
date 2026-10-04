@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import json
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -44,35 +43,51 @@ class JobStatus(BaseModel):
 
 jobs: dict[str, JobStatus] = {}
 
+# Live endpoints only analyze code under this root (default: ./data), so the public
+# API cannot be pointed at arbitrary server paths.
+ALLOWED_ROOT = Path(os.environ.get("ARCHAEOLOGIST_ALLOWED_ROOT", "data")).resolve()
+
+
+def resolve_safe_path(raw: str) -> Path:
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = ALLOWED_ROOT / candidate
+    candidate = candidate.resolve()
+    if candidate != ALLOWED_ROOT and ALLOWED_ROOT not in candidate.parents:
+        raise HTTPException(403, f"Path must be inside {ALLOWED_ROOT}")
+    if not candidate.is_dir():
+        raise HTTPException(404, f"Directory not found: {raw}")
+    return candidate
+
 
 DEMO_REPORT = {
     "mode": "deterministic-demo",
     "site_name": "test_project",
     "summary": {
         "total_files": 2,
-        "total_lines_of_code": 138,
-        "total_functions": 14,
-        "total_classes": 2,
-        "languages": {"python": {"files": 2, "loc": 138}},
+        "total_lines_of_code": 193,
+        "total_functions": 32,
+        "total_classes": 4,
+        "languages": {"python": {"files": 2, "loc": 193}},
     },
     "health_score": {
         "overall_score": 67,
         "risk_level": "medium",
         "top_concerns": [
-            "Long service methods",
-            "Repeated validation logic",
-            "Missing integration coverage",
+            "God class: UserService",
+            "Unused public methods",
+            "No automated tests",
         ],
     },
     "hotspots": [
-        {"file": "service.py", "complexity": 24, "lines": 97, "functions": 9},
-        {"file": "api.py", "complexity": 11, "lines": 41, "functions": 5},
+        {"file": "service.py", "complexity": 12, "lines": 154, "functions": 27},
+        {"file": "api.py", "complexity": 2, "lines": 39, "functions": 5},
     ],
     "findings": {
-        "artifacts": 5,
-        "strata": 3,
-        "fossils": 2,
-        "ruins": 4,
+        "artifacts": 4,
+        "strata": 0,
+        "fossils": 15,
+        "ruins": 1,
     },
     "note": "This public demo uses a bundled, deterministic fixture. Live scans route analysis prompts to the configured Nemotron models on Nebius.",
 }
@@ -119,8 +134,7 @@ $('run').addEventListener('click', run); run();
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    if not settings.nebius.api_key:
+    if not get_settings().nebius.api_key:
         print("WARNING: NEBIUS_API_KEY not set")
     yield
 
@@ -135,82 +149,59 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-async def run_excavation(job_id: str, request: ExcavationRequest):
-    jobs[job_id].status = "running"
-    jobs[job_id].message = "Initializing..."
+async def run_excavation(job_id: str, site_path: Path, request: ExcavationRequest):
+    def update(status: str | None = None, progress: float | None = None, message: str | None = None) -> None:
+        job = jobs[job_id]
+        if status is not None:
+            job.status = status
+        if progress is not None:
+            job.progress = progress
+        if message is not None:
+            job.message = message
+        job.updated_at = datetime.now()
+
+    update("running", 0.1, "Excavating...")
 
     try:
-        settings = get_settings()
         async with NebiusClient() as client:
             engine = ExcavationEngine(client)
-
-            jobs[job_id].progress = 0.1
-            jobs[job_id].message = "Parsing files..."
-            await engine._discover_and_parse(Path(request.path))
-            await engine._build_dependency_graph()
-            await engine._analyze_git_history()
-
-            jobs[job_id].progress = 0.4
-            jobs[job_id].message = "Excavating..."
-            report = await engine.excavate(request.path)
+            report = await engine.excavate(site_path)
 
             if request.fast:
-                jobs[job_id].progress = 0.6
-                jobs[job_id].message = "Fast analysis..."
-                fast_engine = FastAnalysisEngine(client)
-                fast_results = await fast_engine.quick_scan(engine.parsed_files)
-                report["fast_analysis"] = fast_results
+                update(progress=0.5, message="Fast analysis...")
+                report["fast_analysis"] = await FastAnalysisEngine(client).quick_scan(engine.parsed_files)
 
             if request.deep:
-                jobs[job_id].progress = 0.7
-                jobs[job_id].message = "Deep reasoning with Nemotron 3 Ultra..."
+                update(progress=0.7, message="Deep reasoning with Nemotron 3 Ultra...")
                 reasoning_engine = DeepReasoningEngine(client)
-
-                from code_archaeologist.models.findings import Artifact, Fossil, Ruin, Stratum
-                artifacts = [Artifact(**a) for a in report["artifacts"]]
-                strata = [Stratum(**s) for s in report["strata"]]
-                fossils = [Fossil(**f) for f in report["fossils"]]
-                ruins = [Ruin(**r) for r in report["ruins"]]
-
-                arch_analysis = await reasoning_engine.analyze_architecture(
-                    artifacts, strata, fossils, ruins,
-                    {"site_name": report["site_name"], "site_path": report["site_path"]}
+                context = {"site_name": report["site_name"], "site_path": report["site_path"]}
+                report["deep_analysis"] = await reasoning_engine.analyze_architecture(
+                    engine.artifacts, engine.strata, engine.fossils, engine.ruins, context
                 )
-                report["deep_analysis"] = arch_analysis
+                report["remediation_plan"] = await reasoning_engine.generate_remediation_plan(
+                    engine.ruins, engine.strata, context
+                )
+                report["evolution_prediction"] = await reasoning_engine.predict_evolution(
+                    engine.strata, engine.artifacts, context
+                )
 
-                remediation = await reasoning_engine.generate_remediation_plan(ruins, strata, {
-                    "site_name": report["site_name"],
-                    "site_path": report["site_path"],
-                })
-                report["remediation_plan"] = remediation
-
-                evolution = await reasoning_engine.predict_evolution(strata, artifacts, {
-                    "site_name": report["site_name"],
-                    "site_path": report["site_path"],
-                })
-                report["evolution_prediction"] = evolution
-
-            jobs[job_id].progress = 1.0
-            jobs[job_id].status = "completed"
-            jobs[job_id].message = "Excavation complete"
             jobs[job_id].result = report
-            jobs[job_id].updated_at = datetime.now()
+            update("completed", 1.0, "Excavation complete")
 
     except Exception as e:
-        jobs[job_id].status = "failed"
         jobs[job_id].error = str(e)
-        jobs[job_id].message = f"Failed: {e}"
-        jobs[job_id].updated_at = datetime.now()
+        update("failed", message=f"Failed: {e}")
 
 
 @app.post("/excavate", response_model=JobStatus)
 async def start_excavation(request: ExcavationRequest, background_tasks: BackgroundTasks):
+    site_path = resolve_safe_path(request.path)
     job_id = str(uuid.uuid4())[:8]
     job = JobStatus(
         job_id=job_id,
@@ -221,7 +212,7 @@ async def start_excavation(request: ExcavationRequest, background_tasks: Backgro
         updated_at=datetime.now(),
     )
     jobs[job_id] = job
-    background_tasks.add_task(run_excavation, job_id, request)
+    background_tasks.add_task(run_excavation, job_id, site_path, request)
     return job
 
 
@@ -249,24 +240,28 @@ async def demo_report():
 
 @app.post("/scan")
 async def quick_scan(request: ScanRequest):
-    settings = get_settings()
+    site_path = resolve_safe_path(request.path)
     async with NebiusClient() as client:
         engine = ExcavationEngine(client)
-        await engine._discover_and_parse(Path(request.path))
+        await engine._discover_and_parse(site_path)
         await engine._build_dependency_graph()
 
         fast_engine = FastAnalysisEngine(client)
 
         if request.file:
-            rel_path = Path(request.file).relative_to(Path(request.path)).as_posix()
-            if rel_path in engine.parsed_files:
-                intent = await fast_engine.analyze_file_intent(engine.parsed_files[rel_path])
-                return {"file": rel_path, "analysis": intent}
-            else:
+            file_path = Path(request.file)
+            if not file_path.is_absolute():
+                file_path = site_path / file_path
+            try:
+                rel_path = file_path.resolve().relative_to(site_path).as_posix()
+            except ValueError:
+                raise HTTPException(400, "File must be inside the scanned path")
+            if rel_path not in engine.parsed_files:
                 raise HTTPException(404, f"File not found: {rel_path}")
-        else:
-            results = await fast_engine.quick_scan(engine.parsed_files)
-            return results
+            intent = await fast_engine.analyze_file_intent(engine.parsed_files[rel_path])
+            return {"file": rel_path, "analysis": intent}
+
+        return await fast_engine.quick_scan(engine.parsed_files)
 
 
 @app.get("/health")

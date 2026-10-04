@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from code_archaeologist.core.nebius_client import NebiusClient, ModelTier
+from code_archaeologist.core.nebius_client import NebiusClient, ModelTier, extract_json
 from code_archaeologist.models.findings import Artifact, Fossil, Ruin, Stratum
 
 
@@ -33,7 +33,7 @@ class DeepReasoningEngine:
         )
 
         try:
-            return json.loads(response.content)
+            return extract_json(response.content)
         except json.JSONDecodeError:
             return {"error": "Failed to parse reasoning response", "raw": response.content}
 
@@ -82,7 +82,7 @@ Provide a JSON response with:
         )
 
         try:
-            return json.loads(response.content)
+            return extract_json(response.content)
         except json.JSONDecodeError:
             return {"error": "Failed to parse remediation plan", "raw": response.content}
 
@@ -158,7 +158,7 @@ Provide JSON with:
         )
 
         try:
-            return json.loads(response.content)
+            return extract_json(response.content)
         except json.JSONDecodeError:
             return {"error": "Failed to parse prediction", "raw": response.content}
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -31,6 +32,8 @@ class ParsedFile:
     comments: list[dict[str, Any]] = None
     complexity: int = 0
     lines_of_code: int = 0
+    last_modified: datetime | None = None
+    author: str | None = None
 
     def __post_init__(self):
         if self.functions is None:
@@ -75,23 +78,30 @@ class LanguageParser(ABC):
     def _extract_nodes(self, parsed: ParsedFile) -> None: ...
 
     def _calculate_complexity(self, node: Node) -> int:
+        complexity_types = self._complexity_nodes()
         complexity = 1
-        for child in node.children:
-            if child.type in self._complexity_nodes():
-                complexity += 1
-            complexity += self._calculate_complexity(child)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            for child in current.children:
+                if child.type in complexity_types:
+                    complexity += 1
+                stack.append(child)
         return complexity
 
     @abstractmethod
     def _complexity_nodes(self) -> set[str]: ...
 
     def _get_node_text(self, node: Node, content: str) -> str:
-        return content[node.start_byte:node.end_byte]
+        # tree-sitter offsets are UTF-8 byte offsets, not str indices
+        return (node.text or b"").decode("utf8", errors="replace")
 
     def _walk(self, node: Node) -> Iterator[Node]:
-        yield node
-        for child in node.children:
-            yield from self._walk(child)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            yield current
+            stack.extend(reversed(current.children))
 
 
 class PythonParser(LanguageParser):
@@ -156,6 +166,8 @@ class PythonParser(LanguageParser):
         for child in node.children:
             if child.type == "block":
                 for grandchild in child.children:
+                    if grandchild.type == "decorated_definition":
+                        grandchild = grandchild.child_by_field_name("definition") or grandchild
                     if grandchild.type == "function_definition":
                         name_node = grandchild.child_by_field_name("name")
                         if name_node:
@@ -199,7 +211,7 @@ class JavaScriptParser(LanguageParser):
 
     def _extract_nodes(self, parsed: ParsedFile) -> None:
         for node in self._walk(parsed.tree.root_node):
-            if node.type in ("function_declaration", "function_expression", "arrow_function"):
+            if node.type in ("function_declaration", "function_expression", "function", "arrow_function"):
                 name = self._extract_function_name(node, parsed.content)
                 if name:
                     parsed.functions.append({
@@ -235,7 +247,7 @@ class JavaScriptParser(LanguageParser):
             name_node = node.child_by_field_name("name")
             if name_node:
                 return self._get_node_text(name_node, content)
-        elif node.type in ("function_expression", "arrow_function"):
+        elif node.type in ("function_expression", "function", "arrow_function"):
             parent = node.parent
             if parent and parent.type == "variable_declarator":
                 name_node = parent.child_by_field_name("name")

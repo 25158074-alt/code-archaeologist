@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from code_archaeologist.core.nebius_client import NebiusClient, ModelTier
+from code_archaeologist.core.nebius_client import NebiusClient, ModelTier, extract_json
 from code_archaeologist.models.findings import Artifact, Fossil, Ruin, Stratum
 from code_archaeologist.parsers.treesitter_parsers import ParsedFile
 
@@ -80,7 +80,7 @@ Provide JSON with:
         )
 
         try:
-            return json.loads(response.content)
+            return extract_json(response.content)
         except json.JSONDecodeError:
             return {"overall_score": 50, "risk_level": "medium", "error": "Parse failed"}
 
@@ -119,11 +119,11 @@ SUMMARY:
 HOTSPOTS:
 {json.dumps(hotspots[:5], indent=2)}
 
-Output JSON array of 5 strings, each a specific actionable recommendation.
+Output a JSON object of the form {{"recommendations": ["...", "...", "...", "...", "..."]}} with 5 specific, actionable recommendations.
 """
         response = await self.client.complete(
             messages=[
-                {"role": "system", "content": "Senior dev giving quick wins. Output JSON array only."},
+                {"role": "system", "content": "Senior dev giving quick wins. Output a JSON object only."},
                 {"role": "user", "content": prompt},
             ],
             tier=ModelTier.NANO,
@@ -133,9 +133,10 @@ Output JSON array of 5 strings, each a specific actionable recommendation.
         )
 
         try:
-            data = json.loads(response.content)
-            return data if isinstance(data, list) else data.get("recommendations", [])
-        except json.JSONDecodeError:
+            data = extract_json(response.content)
+            recs = data if isinstance(data, list) else data.get("recommendations", [])
+            return [str(r) for r in recs]
+        except (json.JSONDecodeError, AttributeError):
             return [
                 "Add type hints to improve maintainability",
                 "Extract long methods into smaller functions",
@@ -179,7 +180,7 @@ Output JSON with:
         )
 
         try:
-            return json.loads(response.content)
+            return extract_json(response.content)
         except json.JSONDecodeError:
             return {"error": "Failed to parse", "primary_purpose": "Unknown"}
 
@@ -231,7 +232,7 @@ Output JSON with:
         )
 
         try:
-            return json.loads(response.content)
+            return extract_json(response.content)
         except json.JSONDecodeError:
             return {"error": "Failed to parse refactoring suggestion"}
 

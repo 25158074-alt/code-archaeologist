@@ -18,7 +18,7 @@
 ## Required URLs
 
 - **Public code repository:** https://github.com/25158074-alt/code-archaeologist
-- **Working demo:** https://25158074-alt.github.io/code-archaeologist/
+- **Working demo:** `https://<your-deployment>.nebius.app` (replace after Nebius Serverless deploy)
 - **Demonstration video on YouTube:** `ADD_PUBLIC_YOUTUBE_URL`
 
 ## Recommended track
@@ -30,9 +30,9 @@
 - **NVIDIA Nemotron:** the project routes analysis work across Nemotron Nano, Super, and Ultra tiers. Nano handles quick health scoring and recommendations; Super handles file intent and focused refactoring guidance; Ultra handles architecture analysis, remediation plans, and evolution forecasts.
 - **Token Factory:** the workflow uses model-tier routing and bounded prompts so inexpensive fast passes handle broad repository triage before deeper reasoning is requested. This reduces unnecessary context and token usage while keeping higher-capability reasoning for the findings that need it.
 - **Nebius / NVIDIA API endpoint:** the client is configured through `NEBIUS_BASE_URL` and `NEBIUS_API_KEY`, with the default endpoint documented in `.env.example`.
-- **Nebius Serverless:** `deploy/nebius-serverless.yaml` documents an HTTP deployment shape for the API.
-- **Nebius Serverless Jobs:** `deploy/nebius-jobs.yaml` documents scheduled weekly deep excavations and daily hotspot checks.
-- **Containers:** `deploy/Dockerfile`, `deploy/Dockerfile.web`, and `deploy/docker-compose.yml` provide reproducible deployment options.
+- **Nebius Serverless:** `code_archaeologist/deploy/nebius-serverless.yaml` documents an HTTP deployment shape for the API.
+- **Nebius Serverless Jobs:** `code_archaeologist/deploy/nebius-jobs.yaml` documents scheduled weekly deep excavations and daily hotspot checks.
+- **Containers:** `code_archaeologist/deploy/Dockerfile`, `code_archaeologist/deploy/Dockerfile.web`, and `code_archaeologist/deploy/docker-compose.yml` provide reproducible deployment options.
 - **Tree-sitter:** parses Python, JavaScript, TypeScript, Go, and Rust source into structural signals before model reasoning.
 
 ## Setup and run instructions
@@ -54,7 +54,7 @@ code-archaeologist scan ./test_project
 code-archaeologist excavate ./test_project --deep --fast --format html
 
 # Start the API and public demo page
-python code_archaeologist/deploy/web_api.py
+python -m code_archaeologist.deploy.web_api
 # Open http://localhost:8000
 # API docs: http://localhost:8000/docs
 ```
