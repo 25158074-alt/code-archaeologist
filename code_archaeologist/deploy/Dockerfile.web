@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md ./
 COPY code_archaeologist ./code_archaeologist
+COPY site ./site
 RUN pip install --no-cache-dir ".[web]"
 
 RUN mkdir -p /app/data

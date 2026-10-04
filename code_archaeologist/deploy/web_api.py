@@ -7,13 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from code_archaeologist.analysis.engine import ExcavationEngine
 from code_archaeologist.analysis.deep_reasoning import DeepReasoningEngine
+from code_archaeologist.analysis.engine import ExcavationEngine
 from code_archaeologist.analysis.fast_analysis import FastAnalysisEngine
 from code_archaeologist.core.config import get_settings
 from code_archaeologist.core.nebius_client import NebiusClient
@@ -42,9 +42,6 @@ class JobStatus(BaseModel):
 
 
 jobs: dict[str, JobStatus] = {}
-
-# Live endpoints only analyze code under this root (default: ./data), so the public
-# API cannot be pointed at arbitrary server paths.
 ALLOWED_ROOT = Path(os.environ.get("ARCHAEOLOGIST_ALLOWED_ROOT", "data")).resolve()
 
 
@@ -63,73 +60,50 @@ def resolve_safe_path(raw: str) -> Path:
 DEMO_REPORT = {
     "mode": "deterministic-demo",
     "site_name": "test_project",
-    "summary": {
-        "total_files": 2,
-        "total_lines_of_code": 193,
-        "total_functions": 32,
-        "total_classes": 4,
-        "languages": {"python": {"files": 2, "loc": 193}},
-    },
-    "health_score": {
-        "overall_score": 67,
-        "risk_level": "medium",
-        "top_concerns": [
-            "God class: UserService",
-            "Unused public methods",
-            "No automated tests",
-        ],
-    },
-    "hotspots": [
-        {"file": "service.py", "complexity": 12, "lines": 154, "functions": 27},
-        {"file": "api.py", "complexity": 2, "lines": 39, "functions": 5},
+    "summary": {"total_files": 2, "total_lines_of_code": 193, "total_functions": 32, "total_classes": 4, "languages": {"python": {"files": 2, "loc": 193}}},
+    "health_score": {"overall_score": 67, "risk_level": "medium", "top_concerns": ["God class: UserService", "Unused public methods", "No automated tests", "Service layer has 78% of business logic"]},
+    "artifacts": [
+        {"id": "art-001", "type": "pattern", "name": "Repository pattern", "description": "UserRepository keeps persistence behind a narrow interface, making the service testable.", "location": {"file": "service.py", "lines": "8-24"}, "confidence": 0.94, "tier": "super"},
+        {"id": "art-002", "type": "convention", "name": "Controller boundary", "description": "APIController translates domain objects into stable response dictionaries.", "location": {"file": "api.py", "lines": "8-26"}, "confidence": 0.89, "tier": "nano"},
+        {"id": "art-003", "type": "idiom", "name": "Dataclass domain model", "description": "User is a compact, serializable domain record with explicit fields.", "location": {"file": "service.py", "lines": "10-16"}, "confidence": 0.96, "tier": "nano"},
+        {"id": "art-004", "type": "pattern", "name": "Defensive lookup", "description": "The service returns None for missing users instead of leaking a storage exception.", "location": {"file": "service.py", "lines": "25-32"}, "confidence": 0.86, "tier": "super"},
     ],
-    "findings": {
-        "artifacts": 4,
-        "strata": 0,
-        "fossils": 15,
-        "ruins": 1,
-    },
-    "note": "This public demo uses a bundled, deterministic fixture. Live scans route analysis prompts to the configured Nemotron models on Nebius.",
+    "strata": [
+        {"id": "str-001", "type": "foundation", "name": "Foundation", "description": "Data model and repository primitives.", "files": ["service.py"], "depth": 1, "stability_score": 0.88, "coupling_score": 0.21, "cohesion_score": 0.91},
+        {"id": "str-002", "type": "core", "name": "Core domain", "description": "UserService owns most business behavior and needs decomposition.", "files": ["service.py"], "depth": 2, "stability_score": 0.58, "coupling_score": 0.72, "cohesion_score": 0.44},
+        {"id": "str-003", "type": "feature", "name": "Feature surface", "description": "User operations exposed to clients.", "files": ["api.py"], "depth": 3, "stability_score": 0.64, "coupling_score": 0.61, "cohesion_score": 0.70},
+        {"id": "str-004", "type": "integration", "name": "Integration boundary", "description": "Controller-to-service handoff and response mapping.", "files": ["api.py", "service.py"], "depth": 4, "stability_score": 0.49, "coupling_score": 0.78, "cohesion_score": 0.53},
+        {"id": "str-005", "type": "test", "name": "Test stratum", "description": "Currently disconnected: no automated tests were found.", "files": [], "depth": 5, "stability_score": 0.18, "coupling_score": 0.02, "cohesion_score": 0.20},
+    ],
+    "fossils": [
+        {"id": "fos-001", "type": "dead_code", "name": "legacy_function", "description": "Public function has no call sites in the repository.", "severity": "high", "estimated_age_days": 412, "location": {"file": "service.py", "lines": "104-118"}, "reasoning": "The symbol is exported but never referenced by APIController or tests.", "remediation": "Delete after one release of deprecation telemetry.", "tier": "nano"},
+        {"id": "fos-002", "type": "unused_import", "name": "Unused os import", "description": "Import is retained from an earlier filesystem implementation.", "severity": "low", "estimated_age_days": 260, "location": {"file": "service.py", "lines": "3-3"}, "reasoning": "Tree-sitter found no name usage in the module.", "remediation": "Remove the import.", "tier": "nano"},
+        {"id": "fos-003", "type": "commented_out", "name": "Commented migration block", "description": "Old cache migration code is preserved as a 22-line comment.", "severity": "medium", "estimated_age_days": 188, "location": {"file": "service.py", "lines": "120-141"}, "reasoning": "The block has not executed since the repository history split.", "remediation": "Move context to an ADR, then delete the commented code.", "tier": "super"},
+    ],
+    "ruins": [
+        {"id": "rui-001", "type": "god_class", "name": "God Class: UserService", "description": "One class owns persistence, caching, validation, orchestration, and notification concerns.", "severity": "critical", "effort_estimate": "large", "locations": [{"file": "service.py", "lines": "18-101"}], "reasoning": "UserService contains 27 methods and 154 lines. It reaches across repository, cache, validation, and notification responsibilities.", "remediation": "Extract UserRepository, UserValidator, and NotificationPort. Keep UserService as an application coordinator.", "metrics": {"methods": 27, "lines": 154, "complexity": 12}, "tier": "ultra"},
+        {"id": "rui-002", "type": "leaky_abstraction", "name": "Leaky controller boundary", "description": "APIController exposes service return shapes directly to clients.", "severity": "high", "effort_estimate": "medium", "locations": [{"file": "api.py", "lines": "8-26"}], "reasoning": "The controller knows storage-oriented fields and has no response schema.", "remediation": "Add response DTOs and a mapper at the integration boundary.", "metrics": {"callers": 4, "fields": 9}, "tier": "super"},
+        {"id": "rui-003", "type": "missing_tests", "name": "Missing test stratum", "description": "The feature surface has no automated tests protecting refactors.", "severity": "high", "effort_estimate": "medium", "locations": [{"file": "api.py", "lines": "1-39"}], "reasoning": "No test files or test imports were detected for the two production modules.", "remediation": "Start with contract tests for list_users and get_user, then add service unit tests.", "metrics": {"coverage": 0, "public_methods": 5}, "tier": "nano"},
+    ],
+    "routing_log": [
+        {"model": "Nano", "call": "health + hotspot triage", "tokens": 1284, "latency": "842ms", "cost": 0.03},
+        {"model": "Super", "call": "file intent + strata mapping", "tokens": 4620, "latency": "1.8s", "cost": 0.11},
+        {"model": "Ultra", "call": "ruin explanations", "tokens": 4320, "latency": "4.6s", "cost": 0.18},
+        {"model": "Ultra", "call": "forecast + remediation", "tokens": 8910, "latency": "6.2s", "cost": 0.26},
+    ],
+    "remediation_plan": [
+        {"priority": 1, "title": "Split UserService responsibilities", "effort": "large", "estimate": "3–5 days", "why": "Unblocks safe feature work and reduces change ripple."},
+        {"priority": 2, "title": "Add API contract tests", "effort": "medium", "estimate": "1–2 days", "why": "Creates a safety net before the decomposition."},
+        {"priority": 3, "title": "Quarantine and delete fossils", "effort": "small", "estimate": "2–4 hours", "why": "Removes stale paths and lowers cognitive load."},
+    ],
+    "forecast": [
+        {"when": "Now", "title": "Stabilize the surface", "text": "Add contract tests and pin response DTOs before refactoring."},
+        {"when": "3 months", "title": "Extract application seams", "text": "Split repository, validation, and notification ports from UserService."},
+        {"when": "6 months", "title": "Rebalance the strata", "text": "Feature work moves through an application service; coupling falls."},
+        {"when": "12 months", "title": "A healthier site", "text": "Test stratum becomes connected and the service becomes composable."},
+    ],
+    "note": "This public demo uses a bundled, deterministic fixture with non-empty artifacts, strata, fossils, and ruins. Live scans route analysis prompts to the configured Nemotron models on Nebius Token Factory.",
 }
-
-
-DEMO_HTML = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Code Archaeologist — Live Demo</title>
-  <style>
-    :root { color-scheme: dark; --ink:#f4efe4; --muted:#a9a18f; --gold:#e7b86b; --rust:#b9654b; --panel:#1d2224; --line:#374044; }
-    * { box-sizing:border-box; } body { margin:0; font:16px/1.55 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--ink); background:radial-gradient(circle at 80% 0%,#384238 0,#171b1c 48%,#101213 100%); }
-    main { max-width:1080px; margin:0 auto; padding:56px 24px 72px; } .eyebrow { color:var(--gold); letter-spacing:.14em; text-transform:uppercase; font-size:.75rem; font-weight:700; }
-    h1 { font:700 clamp(2.6rem,7vw,5.8rem)/.95 Georgia,serif; max-width:780px; margin:14px 0 20px; } h1 span { color:var(--gold); } .lede { color:var(--muted); max-width:680px; font-size:1.12rem; }
-    .actions { display:flex; gap:12px; flex-wrap:wrap; margin:28px 0 34px; } button,a.button { border:1px solid var(--gold); border-radius:999px; padding:11px 18px; background:var(--gold); color:#171312; font-weight:800; cursor:pointer; text-decoration:none; } a.ghost { background:transparent; color:var(--ink); border-color:var(--line); }
-    .status { color:var(--muted); min-height:25px; } .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:22px 0; } .card { background:rgba(29,34,36,.82); border:1px solid var(--line); border-radius:14px; padding:18px; } .label { color:var(--muted); font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; } .value { font:700 2.2rem Georgia,serif; color:var(--gold); margin-top:6px; }
-    .columns { display:grid; grid-template-columns:1.1fr .9fr; gap:18px; } h2 { font:700 1.55rem Georgia,serif; margin:4px 0 14px; } ul { padding-left:20px; color:var(--muted); } li+li { margin-top:8px; } code { color:var(--gold); } footer { border-top:1px solid var(--line); margin-top:34px; padding-top:18px; color:var(--muted); font-size:.9rem; }
-    @media (max-width:760px) { .grid,.columns { grid-template-columns:1fr 1fr; } .columns { display:block; } .columns .card+ .card { margin-top:16px; } } @media (max-width:440px) { .grid { grid-template-columns:1fr; } }
-  </style>
-</head>
-<body><main>
-  <div class="eyebrow">Public judging demo · deterministic fixture</div>
-  <h1>Excavate your codebase as an <span>archaeological site.</span></h1>
-  <p class="lede">Code Archaeologist maps patterns, architecture, dead code, and technical debt into a report that is useful to both humans and CI pipelines.</p>
-  <div class="actions"><button id="run">Run sample excavation</button><a class="button ghost" href="/docs">Open API docs</a></div>
-  <div class="status" id="status">Ready to excavate the bundled <code>test_project</code> fixture.</div>
-  <section class="grid" id="metrics"></section>
-  <section class="columns"><article class="card"><h2>Fast health assessment</h2><div id="health">Click “Run sample excavation” to load the report.</div></article><article class="card"><h2>Complexity hotspots</h2><div id="hotspots"></div></article></section>
-  <footer>Live scans use the configured Nebius endpoint and Nemotron model tiers. The public sample is credential-free and does not accept arbitrary filesystem paths.</footer>
-</main><script>
-const $ = (id) => document.getElementById(id);
-function render(data) {
-  const cards = [['Files',data.summary.total_files],['Lines',data.summary.total_lines_of_code],['Functions',data.summary.total_functions],['Health',data.health_score.overall_score + '/100']];
-  $('metrics').innerHTML = cards.map(([k,v]) => `<div class="card"><div class="label">${k}</div><div class="value">${v}</div></div>`).join('');
-  $('health').innerHTML = `<p><strong>${data.health_score.risk_level.toUpperCase()} risk</strong> — ${data.health_score.top_concerns.join(', ')}.</p><ul>${Object.entries(data.findings).map(([k,v]) => `<li>${k}: ${v}</li>`).join('')}</ul>`;
-  $('hotspots').innerHTML = `<ul>${data.hotspots.map(h => `<li><code>${h.file}</code> · complexity ${h.complexity} · ${h.lines} lines</li>`).join('')}</ul>`;
-}
-async function run() { $('run').disabled = true; $('status').textContent = 'Excavating sample files…'; try { const r = await fetch('/demo'); render(await r.json()); $('status').textContent = 'Excavation complete — report loaded from the running API.'; } catch(e) { $('status').textContent = 'Demo request failed: ' + e; } finally { $('run').disabled = false; } }
-$('run').addEventListener('click', run); run();
-</script></body></html>"""
 
 
 @asynccontextmanager
@@ -139,20 +113,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(
-    title="Code Archaeologist API",
-    description="Excavate codebases as archaeological sites using NVIDIA Nemotron models on Nebius",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Code Archaeologist API", description="Excavate codebases as archaeological sites using NVIDIA Nemotron models on Nebius Token Factory", version="1.0.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 
 async def run_excavation(job_id: str, site_path: Path, request: ExcavationRequest):
@@ -166,34 +128,23 @@ async def run_excavation(job_id: str, site_path: Path, request: ExcavationReques
             job.message = message
         job.updated_at = datetime.now()
 
-    update("running", 0.1, "Excavating...")
-
+    update("running", 0.1, "Parsing with tree-sitter...")
     try:
         async with NebiusClient() as client:
             engine = ExcavationEngine(client)
             report = await engine.excavate(site_path)
-
             if request.fast:
-                update(progress=0.5, message="Fast analysis...")
+                update(progress=0.5, message="Nano scan...")
                 report["fast_analysis"] = await FastAnalysisEngine(client).quick_scan(engine.parsed_files)
-
             if request.deep:
-                update(progress=0.7, message="Deep reasoning with Nemotron 3 Ultra...")
+                update(progress=0.7, message="Ultra reasoning...")
                 reasoning_engine = DeepReasoningEngine(client)
                 context = {"site_name": report["site_name"], "site_path": report["site_path"]}
-                report["deep_analysis"] = await reasoning_engine.analyze_architecture(
-                    engine.artifacts, engine.strata, engine.fossils, engine.ruins, context
-                )
-                report["remediation_plan"] = await reasoning_engine.generate_remediation_plan(
-                    engine.ruins, engine.strata, context
-                )
-                report["evolution_prediction"] = await reasoning_engine.predict_evolution(
-                    engine.strata, engine.artifacts, context
-                )
-
+                report["deep_analysis"] = await reasoning_engine.analyze_architecture(engine.artifacts, engine.strata, engine.fossils, engine.ruins, context)
+                report["remediation_plan"] = await reasoning_engine.generate_remediation_plan(engine.ruins, engine.strata, context)
+                report["evolution_prediction"] = await reasoning_engine.predict_evolution(engine.strata, engine.artifacts, context)
             jobs[job_id].result = report
             update("completed", 1.0, "Excavation complete")
-
     except Exception as e:
         jobs[job_id].error = str(e)
         update("failed", message=f"Failed: {e}")
@@ -203,17 +154,10 @@ async def run_excavation(job_id: str, site_path: Path, request: ExcavationReques
 async def start_excavation(request: ExcavationRequest, background_tasks: BackgroundTasks):
     site_path = resolve_safe_path(request.path)
     job_id = str(uuid.uuid4())[:8]
-    job = JobStatus(
-        job_id=job_id,
-        status="pending",
-        progress=0.0,
-        message="Queued",
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-    )
-    jobs[job_id] = job
+    now = datetime.now()
+    jobs[job_id] = JobStatus(job_id=job_id, status="pending", progress=0.0, message="Queued", created_at=now, updated_at=now)
     background_tasks.add_task(run_excavation, job_id, site_path, request)
-    return job
+    return jobs[job_id]
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
@@ -230,7 +174,10 @@ async def list_jobs():
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def landing_page():
-    return HTMLResponse(DEMO_HTML)
+    site_file = Path("site/index.html")
+    if site_file.exists():
+        return HTMLResponse(site_file.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Code Archaeologist</h1><p>Frontend bundle unavailable.</p>")
 
 
 @app.get("/demo")
@@ -245,9 +192,7 @@ async def quick_scan(request: ScanRequest):
         engine = ExcavationEngine(client)
         await engine._discover_and_parse(site_path)
         await engine._build_dependency_graph()
-
         fast_engine = FastAnalysisEngine(client)
-
         if request.file:
             file_path = Path(request.file)
             if not file_path.is_absolute():
@@ -258,15 +203,13 @@ async def quick_scan(request: ScanRequest):
                 raise HTTPException(400, "File must be inside the scanned path")
             if rel_path not in engine.parsed_files:
                 raise HTTPException(404, f"File not found: {rel_path}")
-            intent = await fast_engine.analyze_file_intent(engine.parsed_files[rel_path])
-            return {"file": rel_path, "analysis": intent}
-
+            return {"file": rel_path, "analysis": await fast_engine.analyze_file_intent(engine.parsed_files[rel_path])}
         return await fast_engine.quick_scan(engine.parsed_files)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "code-archaeologist"}
+    return {"status": "healthy", "service": "code-archaeologist", "demo_findings": {"artifacts": len(DEMO_REPORT["artifacts"]), "strata": len(DEMO_REPORT["strata"]), "fossils": len(DEMO_REPORT["fossils"]), "ruins": len(DEMO_REPORT["ruins"])} }
 
 
 if __name__ == "__main__":

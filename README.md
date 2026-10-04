@@ -29,7 +29,7 @@ pip install -e .
 
 # Configure
 cp .env.example .env
-# Edit .env with your NEBIUS_API_KEY from https://integrate.api.nvidia.com
+# Edit .env with your NEBIUS_API_KEY from https://tokenfactory.nebius.com
 
 # Excavate a codebase
 code-archaeologist excavate ./my-project --deep --fast
@@ -81,9 +81,9 @@ python -m code_archaeologist.deploy.web_api
 
 ### Public judging demo
 
-The API also serves a credential-free interactive demo at `/`. Click **Run sample excavation** to load a bundled fixture report from `/demo`; this makes the project easy to evaluate without exposing an API key. Live `/scan` and `/excavate` requests use the configured Nebius endpoint and require `NEBIUS_API_KEY` on the server.
+The API also serves a credential-free interactive product demo at `/`. The fixture includes non-empty artifacts, strata, fossils, and ruins plus model-tier badges, latency/token telemetry, explain panels, remediation steps, a 6–12 month forecast, a stratigraphy cross-section, exports, issue handoff, onboarding brief, CI snippet, severity filters, and highlighted code. Live `/scan` and `/excavate` requests use the Nebius Token Factory endpoint and require `NEBIUS_API_KEY` on the server.
 
-The repository includes the demo page source under `site/`; deploy it through your preferred static host when a permanent public URL is available.
+The repository includes the standalone demo page under `site/`; it accepts a GitHub URL or ZIP upload and clearly labels fixture/demo mode versus live requests. The API root serves the same page when the `site/` directory is present.
 
 See [`SUBMISSION.md`](SUBMISSION.md) for the hackathon description, required URLs, model/tool disclosure, video plan, feedback, and final submission checklist.
 

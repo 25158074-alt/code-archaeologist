@@ -13,13 +13,13 @@
 - **Predict:** forecasts likely architecture evolution over a 6–12 month horizon.
 - **Output formats:** JSON, Markdown, and HTML reports for humans and CI/CD workflows.
 - **Web API:** exposes health, scan, excavation jobs, job status, and OpenAPI documentation.
-- **Public demo mode:** the hosted demo runs a bundled, credential-free fixture so judges can verify the interaction immediately; live scans use the configured model service.
+- **Interactive product demo:** the fixture exposes all four finding categories, model-tier routing, explainable results, remediation, forecast, exports, issue handoff, onboarding, CI snippets, filters, and the stratigraphy cross-section; live scans use the configured Token Factory service.
 
 ## Required URLs
 
 - **Public code repository:** https://github.com/25158074-alt/code-archaeologist
-- **Working demo:** `https://<your-deployment>.nebius.app` (replace after Nebius Serverless deploy)
-- **Demonstration video on YouTube:** `ADD_PUBLIC_YOUTUBE_URL`
+- **Working demo:** `https://25158074-alt.github.io/code-archaeologist/` (GitHub Pages static product demo; enable Pages on the repository if it is not active yet)
+- **Demonstration video on YouTube:** Not published yet; the repository includes the under-three-minute demonstration plan below.
 
 ## Recommended track
 
@@ -29,7 +29,7 @@
 
 - **NVIDIA Nemotron:** the project routes analysis work across Nemotron Nano, Super, and Ultra tiers. Nano handles quick health scoring and recommendations; Super handles file intent and focused refactoring guidance; Ultra handles architecture analysis, remediation plans, and evolution forecasts.
 - **Token Factory:** the workflow uses model-tier routing and bounded prompts so inexpensive fast passes handle broad repository triage before deeper reasoning is requested. This reduces unnecessary context and token usage while keeping higher-capability reasoning for the findings that need it.
-- **Nebius / NVIDIA API endpoint:** the client is configured through `NEBIUS_BASE_URL` and `NEBIUS_API_KEY`, with the default endpoint documented in `.env.example`.
+- **Nebius / NVIDIA API endpoint:** the client is configured through `NEBIUS_BASE_URL` and `NEBIUS_API_KEY`, with the default Nebius Token Factory endpoint documented in `.env.example` (`https://api.tokenfactory.us-central1.nebius.com/v1/`).
 - **Nebius Serverless:** `code_archaeologist/deploy/nebius-serverless.yaml` documents an HTTP deployment shape for the API.
 - **Nebius Serverless Jobs:** `code_archaeologist/deploy/nebius-jobs.yaml` documents scheduled weekly deep excavations and daily hotspot checks.
 - **Containers:** `code_archaeologist/deploy/Dockerfile`, `code_archaeologist/deploy/Dockerfile.web`, and `code_archaeologist/deploy/docker-compose.yml` provide reproducible deployment options.
@@ -94,8 +94,8 @@ This repository was assembled for the submission and contains the project implem
 - [x] NVIDIA Nemotron and Nebius usage explained
 - [x] Token Factory workflow contribution explained
 - [x] Credential-free working demo path included
-- [ ] Hosted demo URL added to this document and the submission form
+- [x] Static demo URL documented: https://25158074-alt.github.io/code-archaeologist/
 - [ ] Under-three-minute demonstration video uploaded publicly to YouTube
-- [ ] YouTube URL added to this document and the submission form
+- [ ] Final YouTube URL added after the demonstration video is published
 - [ ] Exact hackathon track selected on the submission form
 - [ ] Prior-work disclosure finalized if applicable
