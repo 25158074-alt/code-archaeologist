@@ -23,7 +23,7 @@
 - **License:** MIT, visible in the repository as [`LICENSE`](LICENSE) and detected by GitHub as MIT.
 - **Demonstration video:** intentionally omitted; the entrant will provide the public YouTube URL separately.
 
-> **One-time repository setting:** GitHub Pages must be enabled for this repository using the `main` branch and `/` root, or using the included GitHub Actions Pages workflow. The repository API token used for this update did not have permission to enable Pages automatically.
+> **Deployment status:** GitHub Pages is enabled for this repository using the `main` branch and `/` root. The live demo is available at the URL above.
 
 ## 3. Track
 
@@ -129,7 +129,7 @@ Code Archaeologist is submitted as an open-source project developed for this hac
 - [x] Nebius tools and services identified
 - [x] Track identified: Generative AI / AI Applications
 - [x] Feedback on Nebius Token Factory, Nebius AI Cloud, and NVIDIA Nemotron included
-- [ ] GitHub Pages enabled in repository settings (one-time manual setting required)
+- [x] GitHub Pages enabled in repository settings from `main` and `/` root
 - [ ] Demonstration video uploaded to YouTube and added to the submission form — intentionally left for the entrant
 
 ## 10. Copy-ready submission summary
