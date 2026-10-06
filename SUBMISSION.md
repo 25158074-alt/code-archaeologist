@@ -14,7 +14,7 @@
 - **Finding categories:** artifacts, strata, fossils, and ruins organize positive patterns, architecture, stale code, and technical debt.
 - **Output formats:** JSON, Markdown, and HTML reports for humans and CI/CD workflows.
 - **Web API:** provides health, scan, excavation-job, job-status, and OpenAPI endpoints.
-- **Interactive demo:** demonstrates model-tier routing, finding filters, explanations, remediation, forecasting, exports, issue handoff, onboarding, CI snippets, highlighted code, and a stratigraphy cross-section.
+- **Interactive 3D demo:** provides a dashboard-style intelligence console with an orbitable stratigraphy viewport, clickable architecture layers, surfaced artifact/fossil/ruin signals, model-tier routing, finding filters, explanations, remediation, forecasting, exports, issue handoff, onboarding, CI snippets, and highlighted code.
 
 ## 2. Required URLs
 
@@ -36,7 +36,7 @@ Code Archaeologist uses foundation models as an active part of software analysis
 The project satisfies the non-video submission requirements as follows:
 
 - **Required developer tools and project:** implemented as a Python package with CLI, web API, Tree-sitter parsers, model clients, analysis engine, deployment configuration, and a bundled sample project.
-- **Working demo URL:** provided above; the static product demo is in [`site/`](site/).
+- **Working demo URL:** provided above; the static product demo is in [`site/`](site/) and includes the interactive 3D excavation viewport.
 - **Text description:** provided in this document and the repository [`README.md`](README.md).
 - **Public code repository:** GitHub repository is public and available at the URL above.
 - **Complete source and assets:** source code, demo assets, sample project, deployment files, tests, and setup files are included in the repository.
@@ -134,7 +134,7 @@ Code Archaeologist is submitted as an open-source project developed for this hac
 
 ## 10. Copy-ready submission summary
 
-**Code Archaeologist** is an AI-powered software archaeology platform that analyzes codebases with NVIDIA Nemotron models through Nebius Token Factory. It discovers patterns worth preserving, maps architectural strata, identifies stale code fossils, and surfaces technical-debt ruins. Users can run quick scans or deep excavations through the CLI and web API, then receive structured JSON, Markdown, or HTML reports. A credential-free interactive demo shows the complete product workflow, including finding categories, model-tier routing, explanations, remediation plans, evolution forecasts, exports, and architecture visualization.
+**Code Archaeologist** is an AI-powered software archaeology platform that analyzes codebases with NVIDIA Nemotron models through Nebius Token Factory. It discovers patterns worth preserving, maps architectural strata, identifies stale code fossils, and surfaces technical-debt ruins. Users can run quick scans or deep excavations through the CLI and web API, then receive structured JSON, Markdown, or HTML reports. A credential-free interactive dashboard lets judges orbit a 3D stratigraphy viewport, click architecture layers and findings, inspect evidence, and open remediation guidance while also showing model-tier routing, forecasts, exports, and architecture visualization.
 
 **Repository:** https://github.com/25158074-alt/code-archaeologist
 **Demo:** https://25158074-alt.github.io/code-archaeologist/
