@@ -112,7 +112,7 @@ https://api.tokenfactory.us-central1.nebius.com/v1/
 
 ## 8. Prior-work disclosure
 
-Code Archaeologist is submitted as an open-source project developed for this hackathon submission. The submission package includes the implementation, Nemotron/Token Factory integration, tiered model routing, Tree-sitter parsing, the web API, deployment configuration, sample project, tests, and interactive demo. If the entrant's official records identify any component as having existed before the Submission Period, this paragraph should be replaced with a factual account of the substantial Submission Period updates before submitting the form.
+Code Archaeologist was developed as the hackathon project submitted here. During the Submission Period, the project was substantially implemented and prepared for judging through the Nemotron/Token Factory integration, tiered model routing, Tree-sitter parsing, analysis engine, web API, deployment configuration, sample project, automated tests, public GitHub Pages demo, and interactive 3D stratigraphy frontend.
 
 ## 9. Verification checklist (video intentionally excluded)
 
