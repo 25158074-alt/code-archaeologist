@@ -42,7 +42,14 @@ class JobStatus(BaseModel):
 
 
 jobs: dict[str, JobStatus] = {}
+SITE_DIR = Path(__file__).resolve().parents[2] / "site"
+if not SITE_DIR.is_dir():
+    SITE_DIR = Path("site").resolve()
 ALLOWED_ROOT = Path(os.environ.get("ARCHAEOLOGIST_ALLOWED_ROOT", "data")).resolve()
+try:
+    ALLOWED_ROOT.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 
 def resolve_safe_path(raw: str) -> Path:
@@ -174,7 +181,7 @@ async def list_jobs():
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def landing_page():
-    site_file = Path("site/index.html")
+    site_file = SITE_DIR / "index.html"
     if site_file.exists():
         return HTMLResponse(site_file.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Code Archaeologist</h1><p>Frontend bundle unavailable.</p>")
@@ -214,4 +221,6 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # Hosting platforms (Render, Railway, Cloud Run, Heroku, ...) inject $PORT.
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))

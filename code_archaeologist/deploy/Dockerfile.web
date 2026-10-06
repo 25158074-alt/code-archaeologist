@@ -17,6 +17,7 @@ RUN mkdir -p /app/data
 ENV ARCHAEOLOGIST_ALLOWED_ROOT=/app/data
 ENV PYTHONUNBUFFERED=1
 
+ENV PORT=8000
 EXPOSE 8000
 
 CMD ["python", "-m", "code_archaeologist.deploy.web_api"]

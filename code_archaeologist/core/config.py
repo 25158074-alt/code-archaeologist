@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Nebius API
     nebius_api_key: str = Field(default="", description="Nebius API key")
     nebius_base_url: str = Field(
-        default="https://integrate.api.nvidia.com/v1",
+        default="https://api.tokenfactory.us-central1.nebius.com/v1/",
         description="Nebius/NVIDIA API base URL",
     )
     nebius_timeout: float = Field(default=60.0, description="Request timeout in seconds")
@@ -64,8 +64,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def create_dirs(self) -> Settings:
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Don't crash on read-only / unwritable filesystems (common in hosted containers).
+        for d in (self.cache_dir, self.output_dir):
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
         return self
 
     # Properties for backward compatibility

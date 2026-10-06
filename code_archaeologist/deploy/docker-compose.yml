@@ -5,7 +5,7 @@ services:
       dockerfile: code_archaeologist/deploy/Dockerfile
     environment:
       - NEBIUS_API_KEY=${NEBIUS_API_KEY}
-      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL:-https://api.tokenfactory.us-central1.nebius.com/v1/}
     volumes:
       - ./data:/app/data
       - ./reports:/app/reports
@@ -23,9 +23,14 @@ services:
       dockerfile: code_archaeologist/deploy/Dockerfile.web
     environment:
       - NEBIUS_API_KEY=${NEBIUS_API_KEY}
-      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL:-https://api.tokenfactory.us-central1.nebius.com/v1/}
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,os;urllib.request.urlopen('http://localhost:%s/health'%os.environ.get('PORT','8000'))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     volumes:
       - ./data:/app/data
       - ./reports:/app/reports

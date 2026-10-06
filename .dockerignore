@@ -1,0 +1,14 @@
+.git
+.env
+.venv
+__pycache__/
+*.pyc
+*.egg-info
+.cache
+.ruff_cache
+.pytest_cache
+.mypy_cache
+archaeology-reports
+media
+tests
+test_project
