@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import itertools
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -97,7 +98,7 @@ class ExcavationEngine:
 
     async def _initialize_git(self, path: Path) -> None:
         try:
-            self._git_repo = Repo(path, search_parent_directories=True)
+            self._git_repo = Repo(path, search_parent_directories=False)
             self._site_path = path
         except Exception:
             self._git_repo = None
@@ -396,21 +397,21 @@ class ExcavationEngine:
         return strata
 
     def _classify_layer(self, rel_path: str, parsed: ParsedFile) -> StratumType:
-        path_lower = rel_path.lower()
+        parts = {part.lower() for part in Path(rel_path).parts}
 
-        if any(x in path_lower for x in ["test", "spec", "__test__"]):
+        if parts & {"test", "tests", "spec", "__tests__"}:
             return StratumType.TEST
-        if any(x in path_lower for x in ["infra", "deploy", "docker", "k8s", "terraform", "ansible"]):
+        if parts & {"infra", "infrastructure", "deploy", "docker", "k8s", "terraform", "ansible"}:
             return StratumType.INFRASTRUCTURE
-        if any(x in path_lower for x in ["api", "route", "endpoint", "controller", "handler"]):
+        if parts & {"api", "routes", "route", "endpoint", "controller", "handlers", "handler"}:
             return StratumType.PRESENTATION
-        if any(x in path_lower for x in ["service", "usecase", "interactor", "business"]):
+        if parts & {"service", "services", "usecase", "usecases", "interactor", "business"}:
             return StratumType.CORE
-        if any(x in path_lower for x in ["model", "entity", "domain", "schema", "dto"]):
+        if parts & {"model", "models", "entity", "entities", "domain", "schema", "schemas", "dto"}:
             return StratumType.FOUNDATION
-        if any(x in path_lower for x in ["client", "adapter", "gateway", "integration", "external"]):
+        if parts & {"client", "clients", "adapter", "adapters", "gateway", "gateways", "integration", "integrations", "external"}:
             return StratumType.INTEGRATION
-        if any(x in path_lower for x in ["feature", "module", "component", "plugin"]):
+        if parts & {"feature", "features", "module", "modules", "component", "components", "plugin", "plugins"}:
             return StratumType.FEATURE
 
         return StratumType.UNKNOWN
@@ -438,7 +439,7 @@ class ExcavationEngine:
             files=files,
             depth=self._get_layer_depth(layer_type),
             stability_score=stability,
-            coupling_score=avg_coupling,
+            coupling_score=max(0.0, min(1.0, avg_coupling / max(len(self.parsed_files), 1))),
             cohesion_score=cohesion,
         )
 
@@ -482,6 +483,9 @@ class ExcavationEngine:
         return fossils
 
     async def _find_dead_code(self) -> list[Fossil]:
+        return await asyncio.to_thread(self._find_dead_code_sync)
+
+    def _find_dead_code_sync(self) -> list[Fossil]:
         fossils: list[Fossil] = []
         ignored = {"main", "setUp", "tearDown"}
 
@@ -602,8 +606,8 @@ class ExcavationEngine:
         ruins = []
 
         try:
-            cycles = list(nx.simple_cycles(self.file_graph))
-            for cycle in cycles[:10]:
+            cycles = await asyncio.to_thread(lambda: list(itertools.islice(nx.simple_cycles(self.file_graph), 10)))
+            for cycle in cycles:
                 if len(cycle) > 1:
                     ruins.append(Ruin(
                         type=RuinType.CIRCULAR_DEPENDENCY,
@@ -622,6 +626,9 @@ class ExcavationEngine:
         return ruins
 
     async def _find_copy_paste(self) -> list[Ruin]:
+        return await asyncio.to_thread(self._find_copy_paste_sync)
+
+    def _find_copy_paste_sync(self) -> list[Ruin]:
         ruins = []
 
         code_blocks = []
@@ -712,7 +719,10 @@ class ExcavationEngine:
             fossils=fossils,
             ruins=ruins,
             summary={
+                "total_files": len(self.parsed_files),
                 "total_files_analyzed": len(self.parsed_files),
+                "total_functions": sum(len(p.functions) for p in self.parsed_files.values()),
+                "total_classes": sum(len(p.classes) for p in self.parsed_files.values()),
                 "total_lines_of_code": sum(p.lines_of_code for p in self.parsed_files.values()),
                 "languages": list(set(p.language for p in self.parsed_files.values())),
                 "artifact_counts": dict(Counter(a.type.value for a in artifacts)),

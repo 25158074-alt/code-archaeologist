@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     ultra_temperature: float = Field(default=0.3, description="Temperature for deep reasoning")
     super_temperature: float = Field(default=0.5, description="Temperature for balanced tasks")
     nano_temperature: float = Field(default=0.7, description="Temperature for fast calls")
-    max_tokens_ultra: int = Field(default=4096, description="Max tokens for ultra")
-    max_tokens_super: int = Field(default=2048, description="Max tokens for super")
-    max_tokens_nano: int = Field(default=1024, description="Max tokens for nano")
+    max_tokens_ultra: int = Field(default=8192, description="Max tokens for ultra")
+    max_tokens_super: int = Field(default=4096, description="Max tokens for super")
+    max_tokens_nano: int = Field(default=2048, description="Max tokens for nano")
 
     # Analysis
     min_artifact_confidence: float = Field(default=0.6, description="Minimum confidence for artifact detection")

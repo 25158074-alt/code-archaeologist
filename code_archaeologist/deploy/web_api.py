@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import os
 import uuid
+import io
+import shutil
+import asyncio
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -124,47 +129,201 @@ app = FastAPI(title="Code Archaeologist API", description="Excavate codebases as
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 
+def _fallback_plan(ruins: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"priority": i, "title": r.get("name", "Address technical debt"), "effort": r.get("effort_estimate", "medium"), "estimate": r.get("effort_estimate", "medium"), "why": r.get("reasoning", r.get("description", "Reduce maintenance risk."))} for i, r in enumerate(ruins[:5], 1)]
+
+
+def to_dashboard(report: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an excavation report to the exact shape consumed by render()."""
+    summary = dict(report.get("summary") or {})
+    summary.setdefault("total_files", summary.get("total_files_analyzed", 0))
+    summary.setdefault("total_lines_of_code", 0)
+    summary.setdefault("total_functions", 0)
+    summary.setdefault("total_classes", 0)
+    fast = report.get("fast_analysis") or {}
+    health = fast.get("health_score") or report.get("health_score") or {"overall_score": 0, "risk_level": "unknown", "top_concerns": []}
+    if isinstance(health, (int, float)):
+        health = {"overall_score": health, "risk_level": "unknown", "top_concerns": []}
+    plan = report.get("remediation_plan")
+    if isinstance(plan, dict):
+        plan = plan.get("phases") or plan.get("quick_wins") or []
+    if isinstance(plan, list):
+        plan = [{
+            "priority": item.get("priority", item.get("phase", i)),
+            "title": item.get("title", item.get("name", f"Remediation phase {i}")),
+            "effort": item.get("effort", item.get("estimated_effort", "medium")),
+            "estimate": item.get("estimate", item.get("estimated_effort", "medium")),
+            "why": item.get("why", item.get("risk_mitigation", item.get("description", "Reduce architectural risk."))),
+        } for i, item in enumerate(plan, 1)]
+    forecast = report.get("evolution_prediction") or report.get("forecast") or {}
+    if isinstance(forecast, dict):
+        forecast = forecast.get("forecast") or forecast.get("timeline") or forecast.get("stratum_evolution") or []
+    if isinstance(forecast, dict):
+        forecast = [{"when": k, "title": k, "text": str(v)} for k, v in forecast.items()]
+    result = dict(report)
+    result["summary"] = summary
+    result["health_score"] = health
+    result["remediation_plan"] = plan or _fallback_plan(result.get("ruins", []))
+    result["forecast"] = forecast or []
+    result["artifacts"] = [{**x, "tier": x.get("tier", "super")} for x in result.get("artifacts", [])]
+    result["fossils"] = [{**x, "tier": x.get("tier", "nano")} for x in result.get("fossils", [])]
+    result["ruins"] = [{**x, "tier": x.get("tier", "super")} for x in result.get("ruins", [])]
+    result["strata"] = [{**x, "coupling_score": max(0.0, min(1.0, float(x.get("coupling_score", 0))))} for x in result.get("strata", [])]
+    result.setdefault("routing_log", [])
+    return result
+
+
 async def run_excavation(job_id: str, site_path: Path, request: ExcavationRequest):
-    def update(status: str | None = None, progress: float | None = None, message: str | None = None) -> None:
+    def update(status=None, progress=None, message=None):
         job = jobs[job_id]
-        if status is not None:
-            job.status = status
-        if progress is not None:
-            job.progress = progress
-        if message is not None:
-            job.message = message
+        if status is not None: job.status = status
+        if progress is not None: job.progress = progress
+        if message is not None: job.message = message
         job.updated_at = datetime.now()
 
     update("running", 0.1, "Parsing with tree-sitter...")
+    report = None
+    warnings = []
     try:
         async with NebiusClient() as client:
             engine = ExcavationEngine(client)
             report = await engine.excavate(site_path)
             if request.fast:
-                update(progress=0.5, message="Nano scan...")
-                report["fast_analysis"] = await FastAnalysisEngine(client).quick_scan(engine.parsed_files)
+                if not get_settings().nebius.api_key:
+                    warnings.append("NEBIUS_API_KEY is not configured; fast LLM analysis was skipped.")
+                else:
+                    try:
+                        update(progress=0.5, message="Nano scan...")
+                        report["fast_analysis"] = await FastAnalysisEngine(client).quick_scan(engine.parsed_files)
+                    except Exception as exc:
+                        warnings.append(f"Fast analysis unavailable: {exc}")
             if request.deep:
-                update(progress=0.7, message="Ultra reasoning...")
-                reasoning_engine = DeepReasoningEngine(client)
-                context = {"site_name": report["site_name"], "site_path": report["site_path"]}
-                report["deep_analysis"] = await reasoning_engine.analyze_architecture(engine.artifacts, engine.strata, engine.fossils, engine.ruins, context)
-                report["remediation_plan"] = await reasoning_engine.generate_remediation_plan(engine.ruins, engine.strata, context)
-                report["evolution_prediction"] = await reasoning_engine.predict_evolution(engine.strata, engine.artifacts, context)
-            jobs[job_id].result = report
-            update("completed", 1.0, "Excavation complete")
-    except Exception as e:
-        jobs[job_id].error = str(e)
-        update("failed", message=f"Failed: {e}")
+                if not get_settings().nebius.api_key:
+                    warnings.append("NEBIUS_API_KEY is not configured; LLM stages were skipped.")
+                    update(message="Local analysis complete; LLM stages skipped (no NEBIUS_API_KEY)")
+                else:
+                    update(progress=0.7, message="Ultra reasoning...")
+                    reasoning_engine = DeepReasoningEngine(client)
+                    context = {"site_name": report["site_name"], "site_path": report["site_path"]}
+                    try:
+                        report["deep_analysis"] = await reasoning_engine.analyze_architecture(engine.artifacts, engine.strata, engine.fossils, engine.ruins, context)
+                    except Exception as exc:
+                        warnings.append(f"Deep architecture analysis unavailable: {exc}")
+                    try:
+                        report["remediation_plan"] = await reasoning_engine.generate_remediation_plan(engine.ruins, engine.strata, context)
+                    except Exception as exc:
+                        warnings.append(f"Remediation plan unavailable: {exc}")
+                    try:
+                        report["evolution_prediction"] = await reasoning_engine.predict_evolution(engine.strata, engine.artifacts, context)
+                    except Exception as exc:
+                        warnings.append(f"Evolution prediction unavailable: {exc}")
+            report["routing_log"] = client.routing_log
+            report["warnings"] = warnings
+            dashboard = to_dashboard(report)
+            dashboard["job_id"] = job_id
+            jobs[job_id].result = dashboard
+            update("completed", 1.0, "Excavation complete" if not warnings else "Excavation complete with warnings")
+    except Exception as exc:
+        jobs[job_id].error = str(exc)
+        update("failed", message=f"Failed: {exc}")
+
+
+def queue_excavation(site_path: Path, background_tasks: BackgroundTasks, request: ExcavationRequest | None = None) -> JobStatus:
+    job_id = str(uuid.uuid4())
+    now = datetime.now()
+    request = request or ExcavationRequest(path=str(site_path))
+    jobs[job_id] = JobStatus(job_id=job_id, status="pending", progress=0.0, message="Queued", created_at=now, updated_at=now)
+    background_tasks.add_task(run_excavation, job_id, site_path, request)
+    return jobs[job_id]
 
 
 @app.post("/excavate", response_model=JobStatus)
 async def start_excavation(request: ExcavationRequest, background_tasks: BackgroundTasks):
-    site_path = resolve_safe_path(request.path)
-    job_id = str(uuid.uuid4())[:8]
-    now = datetime.now()
-    jobs[job_id] = JobStatus(job_id=job_id, status="pending", progress=0.0, message="Queued", created_at=now, updated_at=now)
-    background_tasks.add_task(run_excavation, job_id, site_path, request)
-    return jobs[job_id]
+    return queue_excavation(resolve_safe_path(request.path), background_tasks, request)
+
+
+@app.post("/upload", response_model=JobStatus)
+async def upload_repository(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Upload a .zip archive")
+    blob = await file.read(50 * 1024 * 1024 + 1)
+    if len(blob) > 50 * 1024 * 1024:
+        raise HTTPException(413, "ZIP uploads are limited to 50 MB")
+    upload_dir = ALLOWED_ROOT / ("upload-" + uuid.uuid4().hex)
+    upload_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            members = [m for m in archive.infolist() if not any(part == "__MACOSX" or part.startswith("._") for part in Path(m.filename).parts)]
+            if len(members) > 5000 or sum(m.file_size for m in members) > 200 * 1024 * 1024:
+                raise HTTPException(413, "Archive exceeds extraction limits")
+            for member in members:
+                target = (upload_dir / member.filename).resolve()
+                if target != upload_dir.resolve() and upload_dir.resolve() not in target.parents:
+                    raise HTTPException(400, "Archive contains an unsafe path")
+                if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise HTTPException(400, "Archive symlinks are not accepted")
+            archive.extractall(upload_dir)
+    except zipfile.BadZipFile:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(400, "Invalid ZIP archive")
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+    # Common GitHub ZIP layout: one top-level folder; otherwise scan extracted root.
+    children = list(upload_dir.iterdir())
+    site_path = children[0] if len(children) == 1 and children[0].is_dir() else upload_dir
+    return queue_excavation(site_path, background_tasks, ExcavationRequest(path=str(site_path)))
+
+
+@app.post("/repository", response_model=JobStatus)
+async def clone_repository(request: dict[str, str], background_tasks: BackgroundTasks):
+    url = request.get("url", "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"github.com", "www.github.com"} or parsed.username or parsed.password:
+        raise HTTPException(400, "Only public HTTPS GitHub repository URLs are supported")
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) not in (2, 4) or (len(parts) == 4 and parts[2] != "tree"):
+        raise HTTPException(400, "Enter a repository URL such as https://github.com/owner/repo or /tree/branch")
+    dest = ALLOWED_ROOT / ("repo-" + uuid.uuid4().hex)
+    try:
+        proc = await asyncio.create_subprocess_exec("git", "clone", "--depth", "200", "--", url, str(dest), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        if proc.returncode:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise HTTPException(400, "Could not clone this public repository: " + stderr.decode(errors="replace")[-300:])
+    except asyncio.TimeoutError:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise HTTPException(408, "Repository clone timed out")
+    return queue_excavation(dest, background_tasks)
+
+
+@app.get("/jobs/{job_id}/source")
+async def source_snippet(job_id: str, file: str, lines: str = "1-20"):
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    path = Path(jobs[job_id].result.get("site_path", "")) if jobs[job_id].result else None
+    if not path or not path.is_dir():
+        raise HTTPException(404, "Source is no longer available")
+    target = (path / file).resolve()
+    if path not in target.parents or not target.is_file():
+        raise HTTPException(400, "File must be inside the scanned path")
+    try:
+        start, end = (int(x) for x in lines.split("-", 1))
+    except ValueError:
+        raise HTTPException(400, "lines must be START-END")
+    content = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    start, end = max(1, start), min(len(content), end)
+    return {"file": file, "start": start, "end": end, "code": [[n, content[n-1]] for n in range(start, end + 1)]}
+
+
+@app.post("/explain")
+async def explain_finding(payload: dict[str, Any]):
+    async with NebiusClient() as client:
+        finding = payload.get("finding") or {}
+        engine = DeepReasoningEngine(client)
+        class Finding:
+            def to_dict(self): return finding
+        return {"explanation": await engine.explain_finding(Finding(), payload.get("context") or {})}
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)

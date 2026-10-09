@@ -86,6 +86,7 @@ class NebiusClient:
         self._models = model_settings or settings.models
         self._client: httpx.AsyncClient | None = None
         self._model_configs = self._build_model_configs()
+        self.routing_log: list[dict[str, Any]] = []
 
     def _build_model_configs(self) -> dict[ModelTier, ModelConfig]:
         return {
@@ -138,7 +139,7 @@ class NebiusClient:
 
     @retry(
         wait=wait_exponential_jitter(initial=1, max=30),
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(get_settings().nebius.max_retries),
         retry=retry_if_exception(_is_retryable),
     reraise=True,
     )
@@ -179,6 +180,13 @@ class NebiusClient:
         choice = data["choices"][0]
         usage = data.get("usage", {})
 
+        self.routing_log.append({
+            "model": model_name,
+            "tier": tier.value,
+            "tokens": usage.get("total_tokens", 0),
+            "latency_ms": round(latency_ms, 2),
+            "latency": f"{latency_ms / 1000:.2f}s",
+        })
         return CompletionResponse(
             content=choice["message"].get("content") or "",
             model=model_name,

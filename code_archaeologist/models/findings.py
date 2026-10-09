@@ -141,6 +141,7 @@ class Fossil:
     severity: Severity = Severity.LOW
     reasoning: str = ""
     remediation: str = ""
+    tier: Literal["ultra", "super", "nano"] = "nano"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,6 +150,7 @@ class Fossil:
             "type": self.type.value,
             "name": self.name,
             "description": self.description,
+            "tier": self.tier,
             "location": (
                 {
                     "file": self.location.file_path,
@@ -178,6 +180,7 @@ class Ruin:
     reasoning: str = ""
     remediation: str = ""
     effort_estimate: Literal["trivial", "small", "medium", "large", "epic"] = "medium"
+    tier: Literal["ultra", "super", "nano"] = "super"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -186,6 +189,7 @@ class Ruin:
             "type": self.type.value,
             "name": self.name,
             "description": self.description,
+            "tier": self.tier,
             "locations": [
                 {"file": loc.file_path, "lines": f"{loc.start_line}-{loc.end_line}"}
                 for loc in self.locations
